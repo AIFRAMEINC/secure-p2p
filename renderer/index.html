@@ -1,0 +1,2871 @@
+<!DOCTYPE html>
+<html lang="fa" dir="rtl">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Secure P2P Messenger</title>
+    <style>
+        @import url('https://fonts.googleapis.com/css2?family=Orbitron:wght@400;700;900&family=Rajdhani:wght@300;400;500;600;700&display=swap');
+        
+        :root {
+            --space-black: #0a0a0a;
+            --space-dark: #1a1a2e;
+            --space-purple: #16213e;
+            --space-blue: #0f3460;
+            --space-cyan: #00d4ff;
+            --space-purple-light: #533483;
+            --space-gradient: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            --space-glow: 0 0 20px rgba(0, 212, 255, 0.3);
+            --text-primary: #ffffff;
+            --text-secondary: #b8bcc8;
+            --text-accent: #00d4ff;
+            --border-glow: 1px solid rgba(0, 212, 255, 0.3);
+        }
+
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: 'Rajdhani', 'Arial', sans-serif;
+            background: var(--space-black);
+            color: var(--text-primary);
+            overflow: hidden;
+            position: relative;
+        }
+
+        /* Animated background */
+        .space-background {
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100vw;
+            height: 100vh;
+            z-index: -1;
+            background: radial-gradient(ellipse at center, #1a1a2e 0%, #0a0a0a 100%);
+        }
+
+        .stars {
+            position: absolute;
+            width: 100%;
+            height: 100%;
+            overflow: hidden;
+        }
+
+        .star {
+            position: absolute;
+            background: white;
+            border-radius: 50%;
+            animation: twinkle 3s infinite;
+        }
+
+        @keyframes twinkle {
+            0%, 100% { opacity: 0.3; }
+            50% { opacity: 1; }
+        }
+
+        /* Title bar */
+        .title-bar {
+            height: 40px;
+            background: rgba(26, 26, 46, 0.9);
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            padding: 0 15px;
+            border-bottom: var(--border-glow);
+            backdrop-filter: blur(10px);
+            -webkit-app-region: drag;
+        }
+
+        .title-bar .title {
+            font-family: 'Orbitron', monospace;
+            font-size: 14px;
+            font-weight: 700;
+            color: var(--text-accent);
+            text-shadow: 0 0 10px rgba(0, 212, 255, 0.5);
+        }
+
+        .window-controls {
+            display: flex;
+            gap: 10px;
+            -webkit-app-region: no-drag;
+        }
+
+        .control-btn {
+            width: 12px;
+            height: 12px;
+            border-radius: 50%;
+            border: none;
+            cursor: pointer;
+            transition: all 0.3s ease;
+        }
+
+        .control-btn.minimize { background: #ffbd2e; }
+        .control-btn.maximize { background: #28ca42; }
+        .control-btn.close { background: #ff5f56; }
+
+        .control-btn:hover {
+            transform: scale(1.2);
+            box-shadow: 0 0 10px currentColor;
+        }
+
+        /* Main container */
+        .main-container {
+            display: flex;
+            height: calc(100vh - 40px);
+        }
+
+        /* Sidebar */
+        .sidebar {
+            width: 320px;
+            background: rgba(22, 33, 62, 0.8);
+            backdrop-filter: blur(15px);
+            border-right: var(--border-glow);
+            display: flex;
+            flex-direction: column;
+        }
+
+        .user-panel {
+            padding: 20px;
+            border-bottom: var(--border-glow);
+            text-align: center;
+        }
+
+        .user-avatar {
+            width: 80px;
+            height: 80px;
+            border-radius: 50%;
+            background: var(--space-gradient);
+            margin: 0 auto 15px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 32px;
+            font-weight: bold;
+            box-shadow: var(--space-glow);
+        }
+
+        .user-info h2 {
+            font-family: 'Orbitron', monospace;
+            margin-bottom: 5px;
+            color: var(--text-accent);
+        }
+
+        .client-id {
+            font-size: 12px;
+            color: var(--text-secondary);
+            background: rgba(0, 212, 255, 0.1);
+            padding: 5px 10px;
+            border-radius: 15px;
+            display: inline-block;
+            margin-top: 5px;
+            cursor: pointer;
+            transition: all 0.3s ease;
+            position: relative;
+        }
+
+        .client-id:hover {
+            background: rgba(0, 212, 255, 0.2);
+            color: var(--text-accent);
+            transform: scale(1.05);
+        }
+
+        .client-id::after {
+            content: 'کلیک کنید تا کپی شود';
+            position: absolute;
+            bottom: -25px;
+            left: 50%;
+            transform: translateX(-50%);
+            background: rgba(0, 0, 0, 0.8);
+            color: white;
+            padding: 5px 10px;
+            border-radius: 5px;
+            font-size: 10px;
+            opacity: 0;
+            transition: all 0.3s ease;
+            pointer-events: none;
+            white-space: nowrap;
+        }
+
+        .client-id:hover::after {
+            opacity: 1;
+        }
+
+        .regenerate-id-btn {
+            margin-top: 10px;
+            padding: 8px 16px;
+            border: none;
+            border-radius: 20px;
+            background: rgba(255, 193, 7, 0.2);
+            color: #ffc107;
+            cursor: pointer;
+            font-size: 12px;
+            font-weight: 500;
+            transition: all 0.3s ease;
+            border: 1px solid rgba(255, 193, 7, 0.3);
+            display: block;
+            width: fit-content;
+            margin-left: auto;
+            margin-right: auto;
+        }
+
+        .regenerate-id-btn:hover {
+            background: rgba(255, 193, 7, 0.3);
+            transform: translateY(-2px);
+            box-shadow: 0 4px 15px rgba(255, 193, 7, 0.4);
+        }
+
+        .regenerate-id-btn:active {
+            transform: translateY(0);
+        }
+
+        .regenerate-id-btn:disabled {
+            opacity: 0.5;
+            cursor: not-allowed;
+            pointer-events: none;
+        }
+
+        /* Chat list */
+        .chat-list {
+            flex: 1;
+            overflow-y: auto;
+            padding: 20px;
+        }
+
+        /* Add chat button */
+        .add-chat-btn {
+            padding: 20px;
+            margin-bottom: 15px;
+            border-radius: 15px;
+            background: rgba(0, 212, 255, 0.1);
+            border: 2px dashed rgba(0, 212, 255, 0.3);
+            cursor: pointer;
+            transition: all 0.3s ease;
+            display: flex;
+            align-items: center;
+            gap: 15px;
+            color: var(--text-accent);
+        }
+
+        .add-chat-btn:hover {
+            background: rgba(0, 212, 255, 0.2);
+            border-color: var(--text-accent);
+            transform: translateY(-3px);
+            box-shadow: 0 8px 25px rgba(0, 212, 255, 0.2);
+        }
+
+        .add-icon {
+            width: 40px;
+            height: 40px;
+            border-radius: 50%;
+            background: var(--space-gradient);
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 24px;
+            font-weight: bold;
+            color: white;
+            box-shadow: 0 4px 15px rgba(102, 126, 234, 0.3);
+        }
+
+        .add-text {
+            font-weight: 600;
+            font-size: 16px;
+        }
+
+        .chat-item {
+            padding: 15px;
+            margin-bottom: 10px;
+            border-radius: 10px;
+            background: rgba(255, 255, 255, 0.05);
+            border: 1px solid rgba(255, 255, 255, 0.1);
+            cursor: pointer;
+            transition: all 0.3s ease;
+        }
+
+        .chat-item:hover {
+            background: rgba(0, 212, 255, 0.1);
+            border-color: var(--text-accent);
+            transform: translateX(-5px);
+        }
+
+        .chat-item.active {
+            background: rgba(0, 212, 255, 0.2);
+            border-color: var(--text-accent);
+            box-shadow: var(--space-glow);
+        }
+
+        .chat-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 5px;
+        }
+
+        .chat-name {
+            font-weight: 600;
+            color: var(--text-primary);
+        }
+
+        .chat-time {
+            font-size: 12px;
+            color: var(--text-secondary);
+        }
+
+        .chat-preview {
+            font-size: 14px;
+            color: var(--text-secondary);
+            overflow: hidden;
+            text-overflow: ellipsis;
+            white-space: nowrap;
+        }
+
+        /* Chat area - Fixed layout */
+        .chat-area {
+            flex: 1;
+            display: flex;
+            flex-direction: column;
+            background: rgba(15, 52, 96, 0.3);
+            position: relative;
+        }
+
+        /* Chat header - Telegram style - بخش زرد */
+        .chat-header-bar {
+            padding: 16px 20px;
+            border-bottom: 1px solid rgba(255, 255, 255, 0.1);
+            background: rgba(26, 26, 46, 0.95);
+            backdrop-filter: blur(10px);
+            min-height: 80px;
+        }
+
+        .chat-header-content {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            height: 100%;
+        }
+
+        .chat-info {
+            flex: 1;
+            display: flex;
+            flex-direction: column;
+            justify-content: center;
+        }
+
+        .chat-title {
+            font-weight: 600;
+            font-size: 18px;
+            color: var(--text-primary);
+            margin-bottom: 4px;
+        }
+
+        .chat-status {
+            font-size: 14px;
+            color: var(--text-accent);
+            transition: all 0.3s ease;
+        }
+
+        .chat-status.offline {
+            color: var(--text-secondary);
+        }
+
+        .chat-status.left {
+            color: #ff5f56;
+        }
+
+        .chat-actions {
+            display: flex;
+            gap: 12px;
+            align-items: center;
+        }
+
+        .header-action-btn {
+            width: 44px;
+            height: 44px;
+            border: none;
+            border-radius: 50%;
+            background: rgba(255, 255, 255, 0.1);
+            color: var(--text-secondary);
+            cursor: pointer;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 20px;
+            transition: all 0.2s ease;
+            border: 1px solid rgba(255, 255, 255, 0.1);
+        }
+
+        .header-action-btn:hover {
+            background: rgba(255, 255, 255, 0.2);
+            color: var(--text-primary);
+            transform: scale(1.05);
+        }
+
+        .header-action-btn.danger:hover {
+            background: rgba(255, 95, 86, 0.2);
+            color: #ff5f56;
+            border-color: rgba(255, 95, 86, 0.3);
+        }
+
+        /* Chat Menu Dropdown */
+        .chat-menu {
+            position: fixed;
+            top: 60px;
+            right: 20px;
+            background: rgba(26, 26, 46, 0.95);
+            backdrop-filter: blur(15px);
+            border-radius: 12px;
+            border: 1px solid rgba(255, 255, 255, 0.1);
+            box-shadow: 0 8px 32px rgba(0, 0, 0, 0.4);
+            z-index: 1000;
+            min-width: 200px;
+            padding: 8px 0;
+            animation: menuSlideIn 0.2s ease;
+        }
+
+        .menu-item {
+            display: flex;
+            align-items: center;
+            padding: 12px 16px;
+            color: var(--text-primary);
+            cursor: pointer;
+            transition: all 0.2s ease;
+            gap: 12px;
+            font-size: 15px;
+        }
+
+        .menu-item:hover {
+            background: rgba(255, 255, 255, 0.1);
+        }
+
+        .menu-item.danger {
+            color: #ff5f56;
+        }
+
+        .menu-item.danger:hover {
+            background: rgba(255, 95, 86, 0.1);
+        }
+
+        .menu-icon {
+            font-size: 16px;
+            width: 20px;
+            text-align: center;
+        }
+
+        @keyframes menuSlideIn {
+            from {
+                opacity: 0;
+                transform: translateY(-10px) scale(0.95);
+            }
+            to {
+                opacity: 1;
+                transform: translateY(0) scale(1);
+            }
+        }
+
+        /* Messages - Telegram style */
+        .messages-container {
+            flex: 1;
+            overflow-y: auto;
+            padding: 12px 16px;
+            scroll-behavior: smooth;
+        }
+
+        .message {
+            margin-bottom: 8px;
+            display: flex;
+            align-items: flex-end;
+            animation: messageSlideIn 0.2s ease;
+        }
+
+        .message.sent {
+            justify-content: flex-end;
+        }
+
+        .message-bubble {
+            max-width: 70%;
+            padding: 8px 14px;
+            border-radius: 18px;
+            position: relative;
+            word-wrap: break-word;
+            font-size: 15px;
+            line-height: 1.4;
+        }
+
+        .message.sent .message-bubble {
+            background: var(--text-accent);
+            color: white;
+            border-bottom-right-radius: 4px;
+            margin-left: 50px;
+        }
+
+        .message.received .message-bubble {
+            background: rgba(255, 255, 255, 0.1);
+            color: var(--text-primary);
+            border-bottom-left-radius: 4px;
+            margin-right: 50px;
+            border: 1px solid rgba(255, 255, 255, 0.1);
+        }
+
+        .message-time {
+            font-size: 11px;
+            color: rgba(255, 255, 255, 0.7);
+            margin-top: 4px;
+            text-align: right;
+            direction: ltr;
+        }
+
+        .message.received .message-time {
+            color: var(--text-secondary);
+        }
+
+        @keyframes messageSlideIn {
+            from {
+                opacity: 0;
+                transform: translateY(10px);
+            }
+            to {
+                opacity: 1;
+                transform: translateY(0);
+            }
+        }
+
+        /* Message input - Telegram style */
+        .message-input-container {
+            padding: 12px 16px;
+            border-top: 1px solid rgba(255, 255, 255, 0.1);
+            background: rgba(26, 26, 46, 0.95);
+            backdrop-filter: blur(10px);
+        }
+
+        .message-input-form {
+            display: flex;
+            align-items: center;
+        }
+
+        .input-wrapper {
+            flex: 1;
+            display: flex;
+            align-items: center;
+            background: rgba(255, 255, 255, 0.08);
+            border-radius: 22px;
+            padding: 8px 12px;
+            border: 1px solid rgba(255, 255, 255, 0.1);
+            transition: all 0.2s ease;
+        }
+
+        .input-wrapper:focus-within {
+            border-color: var(--text-accent);
+            background: rgba(255, 255, 255, 0.12);
+            box-shadow: 0 0 0 2px rgba(0, 212, 255, 0.1);
+        }
+
+        .attach-btn {
+            width: 32px;
+            height: 32px;
+            border: none;
+            border-radius: 50%;
+            background: rgba(255, 255, 255, 0.1);
+            color: var(--text-secondary);
+            cursor: pointer;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 16px;
+            transition: all 0.2s ease;
+            margin-right: 8px;
+            flex-shrink: 0;
+        }
+
+        .attach-btn:hover {
+            background: rgba(255, 255, 255, 0.2);
+            color: var(--text-primary);
+            transform: scale(1.1);
+        }
+
+        .message-input {
+            flex: 1;
+            border: none;
+            background: transparent;
+            color: var(--text-primary);
+            font-size: 15px;
+            padding: 6px 8px;
+            outline: none;
+            resize: none;
+            min-height: 20px;
+            max-height: 100px;
+        }
+
+        .message-input::placeholder {
+            color: var(--text-secondary);
+        }
+
+        .send-btn {
+            width: 36px;
+            height: 36px;
+            border: none;
+            border-radius: 50%;
+            background: var(--text-accent);
+            color: white;
+            cursor: pointer;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            margin-left: 8px;
+            transition: all 0.2s ease;
+            box-shadow: 0 2px 8px rgba(0, 212, 255, 0.3);
+            opacity: 0.5;
+            transform: scale(0.8);
+            pointer-events: none;
+            flex-shrink: 0;
+        }
+
+        .send-btn:hover {
+            background: #00c4ef;
+            transform: scale(1.05);
+            box-shadow: 0 4px 12px rgba(0, 212, 255, 0.4);
+        }
+
+        .send-btn:active {
+            transform: scale(0.95);
+        }
+
+        .send-btn.active {
+            opacity: 1;
+            transform: scale(1);
+            pointer-events: auto;
+        }
+
+        .send-btn svg {
+            width: 20px;
+            height: 20px;
+        }
+
+        /* File Upload Progress */
+        .file-upload-progress {
+            background: rgba(26, 26, 46, 0.95);
+            border-radius: 12px;
+            padding: 16px;
+            margin-top: 12px;
+            border: 1px solid rgba(255, 255, 255, 0.1);
+            backdrop-filter: blur(10px);
+        }
+
+        .upload-info {
+            display: flex;
+            align-items: center;
+            margin-bottom: 12px;
+        }
+
+        .file-icon {
+            font-size: 24px;
+            margin-right: 12px;
+            flex-shrink: 0;
+        }
+
+        .file-details {
+            flex: 1;
+            min-width: 0;
+        }
+
+        .file-name {
+            font-weight: 600;
+            color: var(--text-primary);
+            margin-bottom: 4px;
+            overflow: hidden;
+            text-overflow: ellipsis;
+            white-space: nowrap;
+        }
+
+        .file-size {
+            font-size: 12px;
+            color: var(--text-secondary);
+        }
+
+        .cancel-upload-btn {
+            width: 24px;
+            height: 24px;
+            border: none;
+            border-radius: 50%;
+            background: rgba(255, 95, 86, 0.2);
+            color: #ff5f56;
+            cursor: pointer;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 12px;
+            transition: all 0.2s ease;
+            flex-shrink: 0;
+            margin-left: 12px;
+        }
+
+        .cancel-upload-btn:hover {
+            background: rgba(255, 95, 86, 0.3);
+            transform: scale(1.1);
+        }
+
+        .progress-bar {
+            width: 100%;
+            height: 6px;
+            background: rgba(255, 255, 255, 0.1);
+            border-radius: 3px;
+            overflow: hidden;
+            margin-bottom: 8px;
+        }
+
+        .progress-fill {
+            height: 100%;
+            background: var(--space-gradient);
+            border-radius: 3px;
+            transition: width 0.3s ease;
+            width: 0%;
+        }
+
+        .progress-text {
+            font-size: 12px;
+            color: var(--text-accent);
+            text-align: center;
+        }
+
+        /* File Messages */
+        .file-message {
+            background: rgba(255, 255, 255, 0.05);
+            border-radius: 12px;
+            padding: 12px;
+            margin: 4px 0;
+            border: 1px solid rgba(255, 255, 255, 0.1);
+            max-width: 300px;
+            cursor: pointer;
+            transition: all 0.2s ease;
+        }
+
+        .file-message:hover {
+            background: rgba(255, 255, 255, 0.1);
+            transform: translateY(-1px);
+        }
+
+        .message.sent .file-message {
+            background: rgba(0, 212, 255, 0.2);
+            border-color: rgba(0, 212, 255, 0.3);
+        }
+
+        .message.sent .file-message:hover {
+            background: rgba(0, 212, 255, 0.3);
+        }
+
+        .file-message-header {
+            display: flex;
+            align-items: center;
+            margin-bottom: 8px;
+        }
+
+        .file-message-icon {
+            font-size: 20px;
+            margin-right: 10px;
+            flex-shrink: 0;
+        }
+
+        .file-message-info {
+            flex: 1;
+            min-width: 0;
+        }
+
+        .file-message-name {
+            font-weight: 600;
+            color: var(--text-primary);
+            margin-bottom: 2px;
+            overflow: hidden;
+            text-overflow: ellipsis;
+            white-space: nowrap;
+            font-size: 14px;
+        }
+
+        .file-message-size {
+            font-size: 11px;
+            color: var(--text-secondary);
+        }
+
+        .file-download-btn {
+            padding: 6px 12px;
+            background: rgba(0, 212, 255, 0.2);
+            border: 1px solid rgba(0, 212, 255, 0.3);
+            border-radius: 6px;
+            color: var(--text-accent);
+            font-size: 12px;
+            cursor: pointer;
+            transition: all 0.2s ease;
+            width: 100%;
+            text-align: center;
+        }
+
+        .file-download-btn:hover {
+            background: rgba(0, 212, 255, 0.3);
+            color: white;
+        }
+
+        .message.sent .file-download-btn {
+            background: rgba(255, 255, 255, 0.2);
+            border-color: rgba(255, 255, 255, 0.3);
+            color: white;
+        }
+
+        .message.sent .file-download-btn:hover {
+            background: rgba(255, 255, 255, 0.3);
+        }
+
+        /* File Preview */
+        .file-preview {
+            margin-top: 8px;
+            border-radius: 8px;
+            overflow: hidden;
+            max-width: 100%;
+        }
+
+        .file-preview img {
+            max-width: 100%;
+            max-height: 200px;
+            object-fit: cover;
+            display: block;
+        }
+
+        .file-preview video {
+            max-width: 100%;
+            max-height: 200px;
+        }
+
+        /* File type icons */
+        .file-type-pdf::before { content: '📄'; }
+        .file-type-doc::before { content: '📝'; }
+        .file-type-image::before { content: '🖼️'; }
+        .file-type-video::before { content: '🎥'; }
+        .file-type-audio::before { content: '🎵'; }
+        .file-type-archive::before { content: '📦'; }
+        .file-type-code::before { content: '💻'; }
+        .file-type-unknown::before { content: '📄'; }
+
+        /* Welcome screen */
+        .welcome-screen {
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            height: 100%;
+            text-align: center;
+            padding: 40px;
+        }
+
+        .welcome-icon {
+            font-size: 80px;
+            margin-bottom: 30px;
+            color: var(--text-accent);
+            text-shadow: 0 0 30px rgba(0, 212, 255, 0.5);
+        }
+
+        .welcome-title {
+            font-family: 'Orbitron', monospace;
+            font-size: 28px;
+            font-weight: 900;
+            margin-bottom: 15px;
+            background: var(--space-gradient);
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+            background-clip: text;
+        }
+
+        .welcome-text {
+            font-size: 16px;
+            color: var(--text-secondary);
+            max-width: 500px;
+            line-height: 1.6;
+        }
+
+        /* Modal */
+        .modal {
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            background: rgba(0, 0, 0, 0.8);
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            z-index: 1000;
+            backdrop-filter: blur(5px);
+        }
+
+        .modal-content {
+            background: var(--space-dark);
+            padding: 30px;
+            border-radius: 15px;
+            border: var(--border-glow);
+            max-width: 400px;
+            width: 90%;
+            text-align: center;
+            box-shadow: 0 20px 50px rgba(0, 0, 0, 0.5);
+        }
+
+        .modal h3 {
+            font-family: 'Orbitron', monospace;
+            margin-bottom: 20px;
+            color: var(--text-accent);
+        }
+
+        .modal input {
+            width: 100%;
+            padding: 15px;
+            margin: 10px 0;
+            border: 1px solid rgba(0, 212, 255, 0.3);
+            border-radius: 10px;
+            background: rgba(255, 255, 255, 0.05);
+            color: var(--text-primary);
+            font-size: 14px;
+        }
+
+        .modal input:focus {
+            outline: none;
+            border-color: var(--text-accent);
+            box-shadow: 0 0 15px rgba(0, 212, 255, 0.2);
+        }
+
+        .error-message {
+            background: rgba(255, 95, 86, 0.2);
+            color: #ff5f56;
+            padding: 10px;
+            border-radius: 8px;
+            margin: 10px 0;
+            border: 1px solid rgba(255, 95, 86, 0.3);
+            font-size: 14px;
+            text-align: center;
+        }
+
+        .success-message {
+            background: rgba(40, 202, 66, 0.2);
+            color: #28ca42;
+            padding: 10px;
+            border-radius: 8px;
+            margin: 10px 0;
+            border: 1px solid rgba(40, 202, 66, 0.3);
+            font-size: 14px;
+            text-align: center;
+        }
+
+        .warning-message {
+            background: rgba(255, 193, 7, 0.2);
+            color: #ffc107;
+            padding: 15px;
+            border-radius: 8px;
+            margin: 15px 0;
+            border: 1px solid rgba(255, 193, 7, 0.3);
+            font-size: 13px;
+            text-align: right;
+        }
+
+        .warning-message ul {
+            margin: 10px 0 0 0;
+            padding-right: 20px;
+        }
+
+        .warning-message li {
+            margin-bottom: 5px;
+            line-height: 1.4;
+        }
+
+        .modal-buttons {
+            display: flex;
+            gap: 15px;
+            margin-top: 20px;
+        }
+
+        .modal-btn {
+            flex: 1;
+            padding: 12px;
+            border: none;
+            border-radius: 8px;
+            cursor: pointer;
+            font-weight: 600;
+            transition: all 0.3s ease;
+        }
+
+        .modal-btn.primary {
+            background: var(--space-gradient);
+            color: white;
+        }
+
+        .modal-btn.secondary {
+            background: rgba(255, 255, 255, 0.1);
+            color: var(--text-secondary);
+            border: 1px solid rgba(255, 255, 255, 0.2);
+        }
+
+        .modal-btn:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 5px 15px rgba(0, 0, 0, 0.2);
+        }
+
+        /* Scrollbar styling */
+        ::-webkit-scrollbar {
+            width: 6px;
+        }
+
+        ::-webkit-scrollbar-track {
+            background: rgba(255, 255, 255, 0.1);
+        }
+
+        ::-webkit-scrollbar-thumb {
+            background: var(--space-gradient);
+            border-radius: 3px;
+        }
+
+        ::-webkit-scrollbar-thumb:hover {
+            background: var(--text-accent);
+        }
+
+        /* Animations */
+        @keyframes slideIn {
+            from {
+                opacity: 0;
+                transform: translateX(30px);
+            }
+            to {
+                opacity: 1;
+                transform: translateX(0);
+            }
+        }
+
+        @keyframes fadeIn {
+            from { opacity: 0; }
+            to { opacity: 1; }
+        }
+
+        .message {
+            animation: slideIn 0.3s ease;
+        }
+
+        .modal {
+            animation: fadeIn 0.3s ease;
+        }
+
+        /* Messages - با فضای مناسب برای input در پایین */
+        .messages-container {
+            flex: 1;
+            overflow-y: auto;
+            padding: 12px 16px 80px 16px; /* فضای اضافی برای input در پایین */
+            scroll-behavior: smooth;
+            margin-bottom: 0;
+        }
+
+        /* Chat interface adjustment */
+        .chat-interface {
+            display: flex;
+            flex-direction: column;
+            height: 100%;
+            position: relative;
+        }
+
+        /* Responsive */
+        @media (max-width: 768px) {
+            .sidebar {
+                width: 280px;
+            }
+            
+            .message-bubble {
+                max-width: 85%;
+            }
+
+            .chat-menu {
+                right: 16px;
+                left: 16px;
+                width: auto;
+            }
+
+            .message.sent .message-bubble {
+                margin-left: 20px;
+            }
+
+            .message.received .message-bubble {
+                margin-right: 20px;
+            }
+
+            .message-input-container, #message-input-container {
+                left: 280px;
+            }
+        }
+
+        @media (max-width: 480px) {
+            .main-container {
+                flex-direction: column;
+            }
+
+            .sidebar {
+                width: 100%;
+                height: 200px;
+                order: 2;
+            }
+
+            .chat-area {
+                order: 1;
+                height: calc(100vh - 240px);
+            }
+
+            .message-input-container, #message-input-container {
+                left: 0;
+                right: 0;
+            }
+
+            .chat-header-content {
+                padding: 0 8px;
+            }
+
+            .header-action-btn {
+                width: 38px;
+                height: 38px;
+                font-size: 18px;
+            }
+        }
+    </style>
+</head>
+<body>
+    <div class="space-background">
+        <div class="stars" id="stars"></div>
+    </div>
+
+    <div class="title-bar">
+        <div class="title">🚀 Secure P2P Messenger</div>
+        <div class="window-controls">
+            <button class="control-btn minimize" onclick="minimizeWindow()"></button>
+            <button class="control-btn maximize" onclick="maximizeWindow()"></button>
+            <button class="control-btn close" onclick="closeWindow()"></button>
+        </div>
+    </div>
+
+    <div class="main-container">
+        <div class="sidebar">
+            <div class="user-panel">
+                <div class="user-avatar">👤</div>
+                <div class="user-info">
+                    <h2 id="username">کاربر مرموز</h2>
+                    <div class="client-id" id="clientId" onclick="copyClientId()" title="کلیک کنید تا کپی شود">در حال اتصال...</div>
+                    <button class="regenerate-id-btn" onclick="properRegenerateId()" title="تجدید Client ID - تمام چت‌ها پاک می‌شوند">
+                        🔄 تجدید ID
+                    </button>
+                </div>
+            </div>
+            
+            <div class="chat-list" id="chatList">
+                <!-- Add new chat button -->
+                <div class="add-chat-btn" onclick="findClient()">
+                    <div class="add-icon">+</div>
+                    <div class="add-text">شروع گفتگوی جدید</div>
+                </div>
+                <!-- Chat items will be dynamically added here -->
+            </div>
+        </div>
+
+        <div class="chat-area">
+            <div id="welcomeScreen" class="welcome-screen">
+                <div class="welcome-icon">🌌</div>
+                <h1 class="welcome-title">پیام‌رسان امن فضایی</h1>
+                <p class="welcome-text">
+                    به پیام‌رسان امن P2P خوش آمدید. برای شروع گفتگو، کلاینت ID مقصد را وارد کنید و با رمزنگاری سه‌لایه امن گفتگو کنید.
+                </p>
+            </div>
+
+            <div id="chatInterface" class="chat-interface" style="display: none;">
+                <div class="chat-header-bar">
+                    <div class="chat-header-content">
+                        <div class="chat-info">
+                            <div class="chat-title" id="chatTitle">گفتگو</div>
+                            <div class="chat-status">آنلاین</div>
+                        </div>
+                        <div class="chat-actions">
+                            <button class="header-action-btn" onclick="endChat()" title="پایان چت">
+                                📞
+                            </button>
+                            <button class="header-action-btn" onclick="showChatMenu()" title="منوی بیشتر">
+                                ⋮
+                            </button>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="messages-container" id="messagesContainer">
+                    <!-- Messages will be dynamically added here -->
+                </div>
+
+                <div class="message-input-container" id="message-input-container" style="display: none;">
+                    <form class="message-input-form" onsubmit="sendMessage(event)">
+                        <div class="input-wrapper">
+                            <button type="button" class="attach-btn" onclick="selectFile()" title="پیوست فایل">
+                                📎
+                            </button>
+                            <input 
+                                type="text" 
+                                class="message-input" 
+                                id="messageInput" 
+                                placeholder="پیام..."
+                                autocomplete="off"
+                                oninput="toggleSendButton()"
+                                onkeypress="handleMessageKeyPress(event)"
+                            >
+                            <button type="submit" class="send-btn">
+                                <svg width="24" height="24" viewBox="0 0 24 24" fill="currentColor">
+                                    <path d="M2.01 21L23 12 2.01 3 2 10l15 2-15 2z"/>
+                                </svg>
+                            </button>
+                        </div>
+                    </form>
+                    <!-- Hidden file input -->
+                    <input type="file" id="fileInput" style="display: none;" onchange="handleFileSelect(event)" accept="*/*">
+                    
+                    <!-- File upload progress -->
+                    <div id="fileUploadProgress" class="file-upload-progress" style="display: none;">
+                        <div class="upload-info">
+                            <span class="file-icon">📄</span>
+                            <div class="file-details">
+                                <div class="file-name" id="uploadFileName">فایل.pdf</div>
+                                <div class="file-size" id="uploadFileSize">2.5 MB</div>
+                            </div>
+                            <button class="cancel-upload-btn" onclick="cancelFileUpload()" title="لغو">✖</button>
+                        </div>
+                        <div class="progress-bar">
+                            <div class="progress-fill" id="progressFill"></div>
+                        </div>
+                        <div class="progress-text" id="progressText">در حال رمزنگاری...</div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Registration Modal -->
+    <div id="registrationModal" class="modal">
+        <div class="modal-content">
+            <h3>🚀 ورود به فضای امن</h3>
+            <p>نام کاربری خود را وارد کنید:</p>
+            <input type="text" id="usernameInput" placeholder="نام کاربری" maxlength="20">
+            <div class="modal-buttons">
+                <button class="modal-btn primary" onclick="registerUser()">ورود</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Chat Menu Dropdown -->
+    <div id="chatMenu" class="chat-menu" style="display: none;">
+        <div class="menu-item" onclick="findClient()">
+            <span class="menu-icon">🔍</span>
+            <span>یافتن کاربر جدید</span>
+        </div>
+        <div class="menu-item" onclick="endChat()">
+            <span class="menu-icon">📞</span>
+            <span>پایان و حذف چت</span>
+        </div>
+        <div class="menu-item" onclick="closeChatMenu()">
+            <span class="menu-icon">✖️</span>
+            <span>بستن</span>
+        </div>
+    </div>
+    <div id="findClientModal" class="modal" style="display: none;">
+        <div class="modal-content">
+            <h3>🔍 یافتن کاربر</h3>
+            <p>کلاینت ID کاربر مقصد را وارد کنید:</p>
+            <input type="text" id="targetClientId" placeholder="مثال: b681f568-edf5-4255-9e5e-7fd4f29f3096" onkeypress="handleEnterKey(event)">
+            <div class="error-message" id="clientError" style="display: none;"></div>
+            <div class="modal-buttons">
+                <button class="modal-btn primary" onclick="connectToClient()">
+                    <span id="connectBtnText">🚀 اتصال</span>
+                </button>
+                <button class="modal-btn secondary" onclick="closeFindClientModal()">انصراف</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Regenerate ID Modal -->
+    <div id="regenerateIdModal" class="modal" style="display: none;">
+        <div class="modal-content">
+            <h3>🔄 تجدید Client ID</h3>
+            <p>آیا مطمئن هستید که می‌خواهید Client ID جدید دریافت کنید؟</p>
+            <div class="warning-message">
+                <p><strong>⚠️ هشدار مهم:</strong></p>
+                <ul>
+                    <li>Client ID قبلی منسوخ خواهد شد</li>
+                    <li><strong>🗑️ تمام چت‌های فعال پاک خواهند شد (دوطرفه)</strong></li>
+                    <li>با هویت کاملاً جدید شروع خواهید کرد</li>
+                    <li>کاربران دیگر باید ID جدید شما را برای چت داشته باشند</li>
+                    <li>این عمل قابل بازگشت نیست</li>
+                </ul>
+            </div>
+            <div class="error-message" id="regenerateError" style="display: none;"></div>
+            <div class="success-message" id="regenerateSuccess" style="display: none;"></div>
+            <div class="modal-buttons">
+                <button class="modal-btn primary" onclick="confirmRegenerateId()">
+                    <span id="regenerateBtnText">🔄 تجدید ID و پاک کردن چت‌ها</span>
+                </button>
+                <button class="modal-btn secondary" onclick="closeRegenerateIdModal()">انصراف</button>
+            </div>
+        </div>
+    </div>
+
+    // SCRIPT SECTION - با Auto-Cleanup و حذف فوری
+    <script>
+        // Performance optimization flags
+        const DEBUG_MODE = false; // Set to true for debugging
+        const log = DEBUG_MODE ? console.log : () => {};
+        const logError = console.error; // Always log errors
+        const logInfo = DEBUG_MODE ? console.log : () => {};
+    
+        class SecureMessenger {
+            constructor() {
+                this.currentChat = null;
+                this.chats = new Map();
+                this.clientId = null;
+                this.username = null;
+                this.currentFileUpload = null;
+                this.fileTransfers = new Map(); // Track incoming file transfers
+                this.maxFileSize = 100 * 1024 * 1024; // 100MB limit
+                this.chunkSize = 512 * 1024; // 512KB chunks
+                this.lastNotification = 0; // For throttling notifications
+                this.init();
+            }
+    
+            async init() {
+                this.createStars();
+                this.setupEventListeners();
+                
+                // Show registration modal
+                document.getElementById('registrationModal').style.display = 'flex';
+            }
+    
+            createStars() {
+                const starsContainer = document.getElementById('stars');
+                const numStars = 100;
+    
+                for (let i = 0; i < numStars; i++) {
+                    const star = document.createElement('div');
+                    star.className = 'star';
+                    star.style.left = Math.random() * 100 + '%';
+                    star.style.top = Math.random() * 100 + '%';
+                    star.style.width = Math.random() * 3 + 1 + 'px';
+                    star.style.height = star.style.width;
+                    star.style.animationDelay = Math.random() * 3 + 's';
+                    starsContainer.appendChild(star);
+                }
+            }
+    
+            setupEventListeners() {
+                // Message listeners
+                window.secureAPI.onNewMessage((data) => {
+                    this.handleNewMessage(data);
+                });
+    
+                window.secureAPI.onMessageNotification((data) => {
+                    this.showNotification(`پیام جدید از ${data.sender_id.substring(0, 8)}...`);
+                });
+    
+                window.secureAPI.onChatEnded((clientId) => {
+                    this.handleChatEnded(clientId);
+                });
+    
+                window.secureAPI.onChatDeleted((clientId) => {
+                    this.handleChatDeleted(clientId);
+                });
+    
+                window.secureAPI.onChatDeletedByPeer((data) => {
+                    this.handleChatDeletedByPeer(data);
+                });
+    
+                // NEW: Auto-cleanup event listeners
+                window.secureAPI.onChatAutoClean((data) => {
+                    this.handleChatAutoClean(data);
+                });
+    
+                window.secureAPI.onChatEndedImmediately((data) => {
+                    this.handleChatEndedImmediately(data);
+                });
+    
+                window.secureAPI.onChatCleanupInactive((data) => {
+                    this.handleChatCleanupInactive(data);
+                });
+    
+                // NEW: Remove chat from sidebar
+                window.secureAPI.onRemoveChatFromSidebar((data) => {
+                    this.removeChatFromSidebar(data.clientId);
+                });
+    
+                // File transfer progress listeners
+                window.secureAPI.onFileSendProgress((data) => {
+                    this.handleFileSendProgress(data);
+                });
+    
+                window.secureAPI.onFileReceiveStart((data) => {
+                    this.handleFileReceiveStart(data);
+                });
+    
+                window.secureAPI.onFileReceiveProgress((data) => {
+                    this.handleFileReceiveProgress(data);
+                });
+            }
+    
+            // NEW: Handle auto-cleanup of chats
+            handleChatAutoClean(data) {
+                const { clientId, reason } = data;
+                logInfo('Chat auto-cleaned:', clientId, 'reason:', reason);
+                
+                // Remove from local memory
+                this.chats.delete(clientId);
+                
+                // Remove from UI
+                this.removeChatFromSidebar(clientId);
+                
+                // If this was the current active chat, go back to welcome screen
+                if (this.currentChat === clientId) {
+                    this.currentChat = null;
+                    document.getElementById('welcomeScreen').style.display = 'flex';
+                    document.getElementById('chatInterface').style.display = 'none';
+                    
+                    const inputContainer = document.querySelector('#message-input-container');
+                    if (inputContainer) {
+                        inputContainer.style.display = 'none';
+                    }
+                }
+                
+                // Show notification based on reason
+                let message = '';
+                switch (reason) {
+                    case 'inactivity':
+                        message = `🕒 چت با ${clientId.substring(0, 8)}... به دلیل عدم فعالیت پاک شد`;
+                        break;
+                    case 'peer_offline':
+                        message = `📴 چت با ${clientId.substring(0, 8)}... به دلیل آفلاین بودن طرف مقابل پاک شد`;
+                        break;
+                    default:
+                        message = `🧹 چت با ${clientId.substring(0, 8)}... به صورت خودکار پاک شد`;
+                }
+                
+                this.showNotification(message);
+            }
+    
+            // NEW: Handle immediate chat end
+            handleChatEndedImmediately(data) {
+                const { clientId, reason } = data;
+                logInfo('Chat ended immediately:', clientId, 'reason:', reason);
+                
+                // Remove from local memory
+                this.chats.delete(clientId);
+                
+                // Remove from UI
+                this.removeChatFromSidebar(clientId);
+                
+                // If this was the current active chat, go back to welcome screen
+                if (this.currentChat === clientId) {
+                    this.currentChat = null;
+                    document.getElementById('welcomeScreen').style.display = 'flex';
+                    document.getElementById('chatInterface').style.display = 'none';
+                    
+                    const inputContainer = document.querySelector('#message-input-container');
+                    if (inputContainer) {
+                        inputContainer.style.display = 'none';
+                    }
+                }
+                
+                // Show success notification
+                this.showNotification('✅ چت با موفقیت پایان یافت و پاک شد');
+            }
+    
+            // NEW: Handle inactive chat cleanup
+            handleChatCleanupInactive(data) {
+                const { clientId } = data;
+                logInfo('Inactive chat cleanup:', clientId);
+                
+                // Reset UI to welcome screen if this was the current chat
+                if (this.currentChat === clientId) {
+                    this.currentChat = null;
+                    document.getElementById('welcomeScreen').style.display = 'flex';
+                    document.getElementById('chatInterface').style.display = 'none';
+                    
+                    const inputContainer = document.querySelector('#message-input-container');
+                    if (inputContainer) {
+                        inputContainer.style.display = 'none';
+                    }
+                }
+            }
+    
+            // Handle file send progress
+            handleFileSendProgress(data) {
+                log('File send progress:', data.progress);
+                this.updateProgress(data.progress, `ارسال فایل... ${Math.round(data.progress)}%`);
+            }
+    
+            // Handle incoming file start
+            handleFileReceiveStart(data) {
+                log('File receive started:', data.fileName);
+                
+                // Show notification about incoming file
+                this.showNotification(`📥 دریافت فایل: ${data.fileName}`);
+                
+                // Store transfer info
+                this.fileTransfers.set(data.fileId, {
+                    fileName: data.fileName,
+                    fileSize: data.fileSize,
+                    senderId: data.senderId,
+                    startTime: Date.now()
+                });
+            }
+    
+            // Handle file receive progress
+            handleFileReceiveProgress(data) {
+                const transfer = this.fileTransfers.get(data.fileId);
+                if (transfer) {
+                    log(`File receive progress: ${data.progress}% for ${transfer.fileName}`);
+                    
+                    if (data.progress >= 100) {
+                        this.fileTransfers.delete(data.fileId);
+                        this.showNotification(`✅ فایل دریافت شد: ${transfer.fileName}`);
+                    }
+                }
+            }
+    
+            async registerUser() {
+                const username = document.getElementById('usernameInput').value.trim();
+                if (!username) {
+                    alert('لطفاً نام کاربری را وارد کنید');
+                    return;
+                }
+    
+                try {
+                    const result = await window.secureAPI.registerClient(username);
+                    if (result.success) {
+                        this.clientId = result.clientId;
+                        this.username = username;
+                        
+                        document.getElementById('username').textContent = username;
+                        document.getElementById('clientId').textContent = this.clientId;
+                        document.getElementById('registrationModal').style.display = 'none';
+                        
+                        this.showNotification('✅ با موفقیت وارد شدید');
+                    } else {
+                        alert('خطا در ثبت نام: ' + result.error);
+                    }
+                } catch (error) {
+                    alert('خطا در اتصال به سرور');
+                    logError(error);
+                }
+            }
+    
+            async regenerateClientId() {
+                try {
+                    logInfo('Starting ID regeneration...');
+                    
+                    this.hideRegenerateMessages();
+                    
+                    const btnText = document.getElementById('regenerateBtnText');
+                    const originalText = btnText.innerHTML;
+                    btnText.innerHTML = '⏳ در حال تجدید...';
+                    
+                    // Send PD message to all active chats
+                    logInfo('Terminating all active chats before ID regeneration...');
+                    await this.terminateAllActiveChats();
+                    
+                    // Clear all local chats
+                    this.clearAllLocalChats();
+                    
+                    // Call the real API to regenerate ID
+                    const result = await window.secureAPI.regenerateClientId();
+                    
+                    if (result.success) {
+                        const oldId = result.oldClientId;
+                        const newId = result.newClientId;
+                        
+                        logInfo(`ID regenerated successfully: ${oldId} → ${newId}`);
+                        
+                        this.clientId = newId;
+                        document.getElementById('clientId').textContent = newId;
+                        
+                        this.showRegenerateSuccess(`✅ ID با موفقیت تجدید شد!\n\nID قبلی: ${oldId.substring(0, 8)}...\nID جدید: ${newId.substring(0, 8)}...\n\n⚡ تمام چت‌های قبلی پاک شدند`);
+                        
+                        setTimeout(() => {
+                            this.closeRegenerateIdModal();
+                        }, 4000);
+                        
+                        this.showNotification('🔄 ID جدید دریافت شد - تمام چت‌ها پاک شدند');
+                        
+                    } else {
+                        logError('ID regeneration failed:', result.error);
+                        this.showRegenerateError('❌ خطا در تجدید ID: ' + (result.error || 'نامشخص'));
+                    }
+                } catch (error) {
+                    logError('Regenerate ID error:', error);
+                    this.showRegenerateError('❌ خطا در ارتباط با سرور: ' + error.message);
+                } finally {
+                    const btnText = document.getElementById('regenerateBtnText');
+                    if (btnText) {
+                        btnText.innerHTML = '🔄 تجدید ID و پاک کردن چت‌ها';
+                    }
+                }
+            }
+    
+            // File handling functions
+            selectFile() {
+                if (!this.currentChat) {
+                    this.showError('لطفاً ابتدا یک گفتگو را انتخاب کنید');
+                    return;
+                }
+                
+                const fileInput = document.getElementById('fileInput');
+                fileInput.click();
+            }
+    
+            async handleFileSelect(event) {
+                const file = event.target.files[0];
+                if (!file) return;
+    
+                // Check file size
+                if (file.size > this.maxFileSize) {
+                    this.showError(`❌ حجم فایل نباید بیش از ${this.formatFileSize(this.maxFileSize)} باشد. حجم فایل شما: ${this.formatFileSize(file.size)}`);
+                    return;
+                }
+    
+                logInfo(`File selected: ${file.name}, Size: ${this.formatFileSize(file.size)}, Type: ${file.type}`);
+    
+                try {
+                    await this.uploadAndSendFile(file);
+                } catch (error) {
+                    logError('File upload error:', error);
+                    this.showError('❌ خطا در ارسال فایل: ' + error.message);
+                } finally {
+                    event.target.value = '';
+                    this.hideFileUploadProgress();
+                }
+            }
+    
+            // Enhanced file upload with better progress tracking
+            async uploadAndSendFile(file) {
+                if (!this.currentChat) {
+                    throw new Error('No active chat selected');
+                }
+    
+                this.showFileUploadProgress(file);
+    
+                try {
+                    // Show initial progress
+                    this.updateProgress(5, 'شروع پردازش فایل...');
+                    
+                    // Read file with progress
+                    const fileBase64 = await this.readFileAsBase64WithProgress(file);
+                    
+                    this.updateProgress(25, 'آماده‌سازی فایل...');
+                    
+                    // Create file message object
+                    const fileMessage = {
+                        type: 'file',
+                        fileName: file.name,
+                        fileSize: file.size,
+                        fileType: file.type,
+                        fileData: fileBase64,
+                        timestamp: Date.now()
+                    };
+    
+                    this.updateProgress(35, 'شروع رمزنگاری...');
+                    
+                    // Send the file message (main.js will handle chunking if needed)
+                    const result = await window.secureAPI.sendMessage({
+                        recipientId: this.currentChat,
+                        message: JSON.stringify(fileMessage)
+                    });
+    
+                    if (result.success) {
+                        this.updateProgress(100, 'فایل ارسال شد!');
+                        
+                        this.ensureChatExists(this.currentChat);
+                        this.addMessageToChat(this.currentChat, JSON.stringify(fileMessage), 'sent');
+                        this.displayFileMessage(fileMessage, 'sent', Date.now());
+                        this.updateChatPreview(this.currentChat, `📎 ${file.name}`);
+                        
+                        logInfo(`File sent successfully: ${file.name}`);
+                        
+                        setTimeout(() => {
+                            this.hideFileUploadProgress();
+                        }, 1500);
+                        
+                    } else {
+                        throw new Error(result.error || 'File send failed');
+                    }
+    
+                } catch (error) {
+                    logError('File upload process error:', error);
+                    throw error;
+                }
+            }
+    
+            // Enhanced file reading with progress
+            readFileAsBase64WithProgress(file) {
+                return new Promise((resolve, reject) => {
+                    const reader = new FileReader();
+                    
+                    reader.onprogress = (event) => {
+                        if (event.lengthComputable) {
+                            const progress = 10 + (event.loaded / event.total) * 15; // 10-25% range
+                            this.updateProgress(progress, 'خواندن فایل...');
+                        }
+                    };
+                    
+                    reader.onload = () => {
+                        const base64 = reader.result.split(',')[1];
+                        resolve(base64);
+                    };
+                    
+                    reader.onerror = () => reject(new Error('Failed to read file'));
+                    reader.readAsDataURL(file);
+                });
+            }
+    
+            showFileUploadProgress(file) {
+                const progressDiv = document.getElementById('fileUploadProgress');
+                const fileName = document.getElementById('uploadFileName');
+                const fileSize = document.getElementById('uploadFileSize');
+                const fileIcon = document.querySelector('.file-icon');
+    
+                fileName.textContent = file.name;
+                fileSize.textContent = this.formatFileSize(file.size);
+                fileIcon.textContent = this.getFileIcon(file.type);
+    
+                progressDiv.style.display = 'block';
+                this.updateProgress(0, 'شروع ارسال...');
+    
+                this.currentFileUpload = {
+                    file: file,
+                    cancelled: false
+                };
+            }
+    
+            hideFileUploadProgress() {
+                const progressDiv = document.getElementById('fileUploadProgress');
+                progressDiv.style.display = 'none';
+                this.currentFileUpload = null;
+            }
+    
+            updateProgress(percentage, text) {
+                const progressFill = document.getElementById('progressFill');
+                const progressText = document.getElementById('progressText');
+                
+                if (progressFill) {
+                    progressFill.style.width = Math.min(percentage, 100) + '%';
+                }
+                
+                if (progressText) {
+                    progressText.textContent = text;
+                }
+            }
+    
+            cancelFileUpload() {
+                if (this.currentFileUpload) {
+                    this.currentFileUpload.cancelled = true;
+                    logInfo('File upload cancelled by user');
+                }
+                this.hideFileUploadProgress();
+                this.showNotification('⏹️ ارسال فایل لغو شد');
+            }
+    
+            formatFileSize(bytes) {
+                if (bytes === 0) return '0 B';
+                
+                const k = 1024;
+                const sizes = ['B', 'KB', 'MB', 'GB'];
+                const i = Math.floor(Math.log(bytes) / Math.log(k));
+                
+                return parseFloat((bytes / Math.pow(k, i)).toFixed(2)) + ' ' + sizes[i];
+            }
+    
+            getFileIcon(mimeType) {
+                if (!mimeType) return '📄';
+                
+                if (mimeType.startsWith('image/')) return '🖼️';
+                if (mimeType.startsWith('video/')) return '🎥';
+                if (mimeType.startsWith('audio/')) return '🎵';
+                if (mimeType.includes('pdf')) return '📄';
+                if (mimeType.includes('word') || mimeType.includes('document')) return '📝';
+                if (mimeType.includes('zip') || mimeType.includes('rar') || mimeType.includes('7z')) return '📦';
+                if (mimeType.includes('javascript') || mimeType.includes('python') || mimeType.includes('java')) return '💻';
+                
+                return '📄';
+            }
+    
+            displayFileMessage(fileMessage, type, timestamp) {
+                const messagesContainer = document.getElementById('messagesContainer');
+                const messageDiv = document.createElement('div');
+                messageDiv.className = `message ${type}`;
+    
+                const time = new Date(timestamp).toLocaleTimeString('fa-IR');
+                const fileIcon = this.getFileIcon(fileMessage.fileType);
+                const formattedSize = this.formatFileSize(fileMessage.fileSize);
+    
+                let previewHtml = '';
+                
+                // Add preview for images (with size limit for performance)
+                if (fileMessage.fileType && fileMessage.fileType.startsWith('image/') && fileMessage.fileSize < 5 * 1024 * 1024) {
+                    const imageDataUrl = `data:${fileMessage.fileType};base64,${fileMessage.fileData}`;
+                    previewHtml = `
+                        <div class="file-preview">
+                            <img src="${imageDataUrl}" alt="${fileMessage.fileName}" onclick="openImagePreview('${imageDataUrl}', '${fileMessage.fileName}')">
+                        </div>
+                    `;
+                }
+    
+                messageDiv.innerHTML = `
+                    <div class="message-bubble">
+                        <div class="file-message" onclick="downloadFile('${fileMessage.fileName}', '${fileMessage.fileType}', '${fileMessage.fileData}')">
+                            <div class="file-message-header">
+                                <div class="file-message-icon">${fileIcon}</div>
+                                <div class="file-message-info">
+                                    <div class="file-message-name">${fileMessage.fileName}</div>
+                                    <div class="file-message-size">${formattedSize}</div>
+                                </div>
+                            </div>
+                            ${previewHtml}
+                            <div class="file-download-btn">
+                                📥 دانلود فایل
+                            </div>
+                        </div>
+                        <div class="message-time">${time}</div>
+                    </div>
+                `;
+    
+                messagesContainer.appendChild(messageDiv);
+                messagesContainer.scrollTop = messagesContainer.scrollHeight;
+            }
+    
+            // Optimized file download with memory management
+            async downloadFile(fileName, fileType, fileData) {
+                try {
+                    logInfo(`Downloading file: ${fileName}`);
+                    
+                    // Show progress for large files
+                    if (fileData.length > 1024 * 1024) { // > 1MB base64
+                        this.showNotification('⏳ آماده‌سازی دانلود...');
+                    }
+                    
+                    // Process in chunks to avoid memory issues
+                    const chunk = 1024 * 1024; // 1MB chunks
+                    const bytes = new Uint8Array(fileData.length * 0.75); // Approximate decoded size
+                    
+                    let byteIndex = 0;
+                    for (let i = 0; i < fileData.length; i += chunk) {
+                        const chunkData = fileData.slice(i, i + chunk);
+                        const chunkBytes = this.base64ToBytes(chunkData);
+                        bytes.set(chunkBytes, byteIndex);
+                        byteIndex += chunkBytes.length;
+                        
+                        // Allow UI to update
+                        if (i % (chunk * 4) === 0) {
+                            await new Promise(resolve => setTimeout(resolve, 1));
+                        }
+                    }
+                    
+                    const blob = new Blob([bytes.slice(0, byteIndex)], { type: fileType });
+                    
+                    // Create download link
+                    const url = URL.createObjectURL(blob);
+                    const link = document.createElement('a');
+                    link.href = url;
+                    link.download = fileName;
+                    
+                    document.body.appendChild(link);
+                    link.click();
+                    document.body.removeChild(link);
+                    
+                    // Clean up
+                    setTimeout(() => URL.revokeObjectURL(url), 100);
+                    
+                    this.showNotification(`✅ دانلود شروع شد: ${fileName}`);
+                    
+                } catch (error) {
+                    logError('Download error:', error);
+                    this.showError('❌ خطا در دانلود فایل');
+                }
+            }
+    
+            // Helper: Convert base64 to bytes in chunks
+            base64ToBytes(base64) {
+                const binaryString = atob(base64);
+                const bytes = new Uint8Array(binaryString.length);
+                for (let i = 0; i < binaryString.length; i++) {
+                    bytes[i] = binaryString.charCodeAt(i);
+                }
+                return bytes;
+            }
+    
+            // Terminate all active chats before ID regeneration
+            async terminateAllActiveChats() {
+                logInfo('Terminating all active chats...');
+                
+                if (this.chats.size === 0) {
+                    logInfo('No active chats to terminate');
+                    return;
+                }
+                
+                const terminationPromises = [];
+                
+                for (const [chatClientId] of this.chats) {
+                    logInfo(`Sending termination signal to chat: ${chatClientId}`);
+                    
+                    const terminationPromise = window.secureAPI.sendMessage({
+                        recipientId: chatClientId,
+                        message: 'PD'
+                    }).then(result => {
+                        if (result.success) {
+                            logInfo(`✅ Termination signal sent to: ${chatClientId}`);
+                        } else {
+                            logError(`❌ Failed to send termination to: ${chatClientId}`, result.error);
+                        }
+                    }).catch(error => {
+                        logError(`❌ Error sending termination to ${chatClientId}:`, error);
+                    });
+                    
+                    terminationPromises.push(terminationPromise);
+                }
+                
+                try {
+                    await Promise.allSettled(terminationPromises);
+                    logInfo('All termination signals sent');
+                    await new Promise(resolve => setTimeout(resolve, 1000));
+                } catch (error) {
+                    logError('Error sending termination signals:', error);
+                }
+            }
+    
+            clearAllLocalChats() {
+                logInfo('Clearing all local chats and UI...');
+                
+                const chatCount = this.chats.size;
+                this.chats.clear();
+                logInfo(`Cleared ${chatCount} chats from memory`);
+                
+                const allChatItems = document.querySelectorAll('.chat-item');
+                logInfo(`Removing ${allChatItems.length} chat items from sidebar`);
+                
+                allChatItems.forEach(item => {
+                    item.remove();
+                });
+                
+                this.currentChat = null;
+                
+                document.getElementById('welcomeScreen').style.display = 'flex';
+                document.getElementById('chatInterface').style.display = 'none';
+                
+                const inputContainer = document.querySelector('#message-input-container');
+                if (inputContainer) {
+                    inputContainer.style.display = 'none';
+                }
+                
+                logInfo('All local chats cleared and UI reset');
+            }
+    
+            showRegenerateError(message) {
+                const errorDiv = document.getElementById('regenerateError');
+                if (errorDiv) {
+                    errorDiv.textContent = message;
+                    errorDiv.style.display = 'block';
+                }
+            }
+    
+            showRegenerateSuccess(message) {
+                const successDiv = document.getElementById('regenerateSuccess');
+                if (successDiv) {
+                    successDiv.textContent = message;
+                    successDiv.style.display = 'block';
+                }
+            }
+    
+            hideRegenerateMessages() {
+                const errorDiv = document.getElementById('regenerateError');
+                const successDiv = document.getElementById('regenerateSuccess');
+                
+                if (errorDiv) {
+                    errorDiv.style.display = 'none';
+                    errorDiv.textContent = '';
+                }
+                
+                if (successDiv) {
+                    successDiv.style.display = 'none';
+                    successDiv.textContent = '';
+                }
+            }
+    
+            closeRegenerateIdModal() {
+                const modal = document.getElementById('regenerateIdModal');
+                if (modal) {
+                    modal.style.display = 'none';
+                }
+                
+                this.hideRegenerateMessages();
+                const btnText = document.getElementById('regenerateBtnText');
+                if (btnText) {
+                    btnText.innerHTML = '🔄 تجدید ID و پاک کردن چت‌ها';
+                }
+            }
+    
+            findClient() {
+                document.getElementById('findClientModal').style.display = 'flex';
+                document.getElementById('targetClientId').focus();
+                this.hideError();
+            }
+    
+            closeFindClientModal() {
+                document.getElementById('findClientModal').style.display = 'none';
+                document.getElementById('targetClientId').value = '';
+                this.hideError();
+            }
+    
+            async connectToClient() {
+                const targetClientId = document.getElementById('targetClientId').value.trim();
+                const connectBtn = document.getElementById('connectBtnText');
+                const originalText = connectBtn.innerHTML;
+                
+                if (!targetClientId) {
+                    this.showError('❌ لطفاً Client ID را وارد کنید');
+                    return;
+                }
+    
+                if (targetClientId === this.clientId) {
+                    this.showError('❌ نمی‌توانید با خودتان گفتگو کنید!');
+                    return;
+                }
+    
+                connectBtn.innerHTML = '⏳ در حال جستجو...';
+                
+                try {
+                    const result = await window.secureAPI.findClient(targetClientId);
+                    
+                    if (result.success) {
+                        const chatExists = this.chatExistsAnywhere(targetClientId);
+                        
+                        if (chatExists) {
+                            logInfo(`Existing chat found for ${targetClientId}, opening existing chat`);
+                        } else {
+                            logInfo(`No existing chat found for ${targetClientId}, will create new one`);
+                        }
+                        
+                        this.openChat(targetClientId);
+                        this.closeFindClientModal();
+                        this.showNotification('✅ اتصال برقرار شد');
+                    } else {
+                        this.showError('❌ کاربر یافت نشد یا آفلاین است');
+                    }
+                } catch (error) {
+                    logError('Connect error:', error);
+                    this.showError('❌ خطا در اتصال: کاربر ممکن است حذف شده باشد');
+                } finally {
+                    connectBtn.innerHTML = originalText;
+                }
+            }
+    
+            showError(message) {
+                const errorDiv = document.getElementById('clientError');
+                errorDiv.textContent = message;
+                errorDiv.style.display = 'block';
+                
+                setTimeout(() => {
+                    this.hideError();
+                }, 5000);
+            }
+    
+            hideError() {
+                const errorDiv = document.getElementById('clientError');
+                errorDiv.style.display = 'none';
+                errorDiv.textContent = '';
+            }
+    
+            openChat(clientId) {
+                logInfo(`Opening chat with: ${clientId}`);
+                this.currentChat = clientId;
+                
+                this.ensureChatExists(clientId);
+                this.updateChatInterface();
+                this.updateChatList();
+            }
+    
+            handleChatDeletedByPeer(data) {
+                const { clientId } = data;
+                
+                logInfo('Chat deleted by peer via PD message:', clientId);
+                
+                this.chats.delete(clientId);
+                this.removeChatFromSidebar(clientId);
+                
+                if (this.currentChat === clientId) {
+                    this.currentChat = null;
+                    document.getElementById('welcomeScreen').style.display = 'flex';
+                    document.getElementById('chatInterface').style.display = 'none';
+                    
+                    const inputContainer = document.querySelector('#message-input-container');
+                    if (inputContainer) {
+                        inputContainer.style.display = 'none';
+                    }
+                }
+                
+                this.showNotification(`چت با ${clientId.substring(0, 8)}... توسط طرف مقابل پایان یافت`);
+            }
+    
+            removeChatFromSidebar(clientId) {
+                logInfo('Removing chat from sidebar:', clientId);
+                
+                // Method 1: Try with exact ID
+                let chatItem = document.getElementById(`chat-${clientId}`);
+                if (chatItem) {
+                    logInfo('Method 1 successful - removing with exact ID');
+                    chatItem.remove();
+                    return;
+                }
+                
+                // Method 2: Search through all chat items
+                const allChatItems = document.querySelectorAll('.chat-item');
+                logInfo('Method 2 - searching through all chat items, count:', allChatItems.length);
+                
+                for (let item of allChatItems) {
+                    const onclickStr = item.getAttribute('onclick') || item.onclick?.toString() || '';
+                    if (onclickStr.includes(clientId)) {
+                        logInfo('Method 2 successful - found item with matching onclick');
+                        item.remove();
+                        return;
+                    }
+                    
+                    if (item.id && item.id.includes(clientId)) {
+                        logInfo('Method 2 successful - found item with matching ID');
+                        item.remove();
+                        return;
+                    }
+                    
+                    const shortId = clientId.substring(0, 8);
+                    if (item.textContent && item.textContent.includes(shortId)) {
+                        logInfo('Method 2 successful - found item with matching shortId');
+                        item.remove();
+                        return;
+                    }
+                }
+                
+                logInfo('Could not find chat item to remove for clientId:', clientId);
+            }
+    
+            chatExistsAnywhere(clientId) {
+                const existsInMemory = this.chats.has(clientId);
+                const existsInSidebar = document.getElementById(`chat-${clientId}`) !== null;
+                
+                const allChatItems = document.querySelectorAll('.chat-item');
+                const shortId = clientId.substring(0, 8);
+                let existsBySearch = false;
+                
+                for (let item of allChatItems) {
+                    if (item.textContent && item.textContent.includes(shortId)) {
+                        existsBySearch = true;
+                        break;
+                    }
+                }
+                
+                logInfo(`Chat existence check for ${clientId}: memory=${existsInMemory}, sidebar=${existsInSidebar}, search=${existsBySearch}`);
+                
+                return existsInMemory || existsInSidebar || existsBySearch;
+            }
+    
+            ensureChatExists(clientId) {
+                logInfo(`Ensuring chat exists for: ${clientId}`);
+                
+                if (!this.chats.has(clientId)) {
+                    logInfo(`Adding chat to memory: ${clientId}`);
+                    this.chats.set(clientId, {
+                        messages: [],
+                        status: 'active'
+                    });
+                }
+                
+                if (!document.getElementById(`chat-${clientId}`)) {
+                    logInfo(`Adding chat to sidebar: ${clientId}`);
+                    this.addChatToList(clientId);
+                }
+            }
+    
+            addChatToList(clientId) {
+                const existingItem = document.getElementById(`chat-${clientId}`);
+                if (existingItem) {
+                    logInfo(`Chat item already exists for ${clientId}, not creating duplicate`);
+                    return;
+                }
+                
+                const allChatItems = document.querySelectorAll('.chat-item');
+                for (let item of allChatItems) {
+                    const shortId = clientId.substring(0, 8);
+                    if (item.textContent && item.textContent.includes(shortId)) {
+                        logInfo(`Chat item found by content search for ${clientId}, not creating duplicate`);
+                        return;
+                    }
+                }
+                
+                logInfo(`Creating new chat item for: ${clientId}`);
+                
+                const chatList = document.getElementById('chatList');
+                const chatItem = document.createElement('div');
+                chatItem.className = 'chat-item';
+                chatItem.id = `chat-${clientId}`;
+                
+                chatItem.addEventListener('click', () => {
+                    logInfo(`Opening chat for: ${clientId}`);
+                    this.openChat(clientId);
+                });
+    
+                const shortId = clientId.substring(0, 8) + '...';
+                chatItem.innerHTML = `
+                    <div class="chat-header">
+                        <div class="chat-name">👤 ${shortId}</div>
+                        <div class="chat-time">${new Date().toLocaleTimeString('fa-IR')}</div>
+                    </div>
+                    <div class="chat-preview">گفتگوی جدید</div>
+                `;
+    
+                chatList.appendChild(chatItem);
+                logInfo(`Chat item created and added for: ${clientId}`);
+            }
+    
+            updateChatInterface() {
+                document.getElementById('welcomeScreen').style.display = 'none';
+                document.getElementById('chatInterface').style.display = 'flex';
+                
+                if (this.currentChat) {
+                    const shortId = this.currentChat.substring(0, 8) + '...';
+                    document.getElementById('chatTitle').textContent = shortId;
+                    
+                    const statusElement = document.querySelector('.chat-status');
+                    if (statusElement) {
+                        statusElement.textContent = 'آنلاین';
+                        statusElement.classList.remove('offline', 'left');
+                    }
+                    
+                    this.loadMessages();
+                    
+                    const inputContainer = document.querySelector('#message-input-container');
+                    if (inputContainer) {
+                        inputContainer.style.display = 'block';
+                    }
+                    
+                    setTimeout(() => {
+                        const messageInput = document.getElementById('messageInput');
+                        if (messageInput) {
+                            messageInput.focus();
+                        }
+                    }, 100);
+                }
+            }
+    
+            updateChatList() {
+                const chatItems = document.querySelectorAll('.chat-item');
+                chatItems.forEach(item => {
+                    item.classList.remove('active');
+                    if (item.id === `chat-${this.currentChat}`) {
+                        item.classList.add('active');
+                    }
+                });
+            }
+    
+            loadMessages() {
+                const messagesContainer = document.getElementById('messagesContainer');
+                messagesContainer.innerHTML = '';
+    
+                if (this.chats.has(this.currentChat)) {
+                    const chat = this.chats.get(this.currentChat);
+                    chat.messages.forEach(msg => {
+                        let isFileMessage = false;
+                        let parsedMessage = null;
+                        
+                        try {
+                            parsedMessage = JSON.parse(msg.message);
+                            if (parsedMessage && parsedMessage.type === 'file') {
+                                isFileMessage = true;
+                            }
+                        } catch (e) {
+                            // Regular text message
+                        }
+    
+                        if (isFileMessage) {
+                            this.displayFileMessage(parsedMessage, msg.type, msg.timestamp);
+                        } else {
+                            this.displayMessage(msg.message, msg.type, msg.timestamp);
+                        }
+                    });
+                }
+            }
+    
+            async sendMessage(event) {
+                event.preventDefault();
+                
+                if (!this.currentChat) {
+                    this.showError('لطفاً ابتدا یک گفتگو را انتخاب کنید');
+                    return;
+                }
+    
+                const messageInput = document.getElementById('messageInput');
+                const message = messageInput.value.trim();
+                
+                if (!message) return;
+    
+                messageInput.value = '';
+                messageInput.focus();
+    
+                try {
+                    const result = await window.secureAPI.sendMessage({
+                        recipientId: this.currentChat,
+                        message: message
+                    });
+    
+                    if (result.success) {
+                        this.ensureChatExists(this.currentChat);
+                        this.addMessageToChat(this.currentChat, message, 'sent');
+                        this.displayMessage(message, 'sent', Date.now());
+                        this.updateChatPreview(this.currentChat, message);
+                        
+                        logInfo(`Message sent successfully to: ${this.currentChat}`);
+                    } else {
+                        this.showError('خطا در ارسال پیام: ' + result.error);
+                        messageInput.value = message;
+                    }
+                } catch (error) {
+                    this.showError('خطا در ارسال پیام');
+                    messageInput.value = message;
+                    logError(error);
+                }
+            }
+    
+            handleNewMessage(data) {
+                const { senderId, message, timestamp } = data;
+                
+                // Check for secret termination message
+                if (message === 'PD') {
+                    logInfo('Received chat termination signal from:', senderId);
+                    this.handleChatDeletedByPeer({ clientId: senderId });
+                    return;
+                }
+                
+                // Check for ID update message
+                if (message.startsWith('ID_UPDATE:')) {
+                    this.handleIdUpdateMessage(senderId, message);
+                    return;
+                }
+                
+                this.ensureChatExists(senderId);
+    
+                let isFileMessage = false;
+                let parsedMessage = null;
+                
+                try {
+                    parsedMessage = JSON.parse(message);
+                    if (parsedMessage && parsedMessage.type === 'file') {
+                        isFileMessage = true;
+                    }
+                } catch (e) {
+                    // Regular text message
+                }
+    
+                this.addMessageToChat(senderId, message, 'received');
+                
+                if (this.currentChat === senderId) {
+                    if (isFileMessage) {
+                        this.displayFileMessage(parsedMessage, 'received', timestamp);
+                    } else {
+                        this.displayMessage(message, 'received', timestamp);
+                    }
+                }
+    
+                if (isFileMessage) {
+                    this.updateChatPreview(senderId, `📎 ${parsedMessage.fileName}`);
+                } else {
+                    this.updateChatPreview(senderId, message);
+                }
+                
+                if (isFileMessage) {
+                    this.showNotification(`📎 فایل جدید از ${senderId.substring(0, 8)}...: ${parsedMessage.fileName}`);
+                } else {
+                    this.showNotification(`پیام جدید از ${senderId.substring(0, 8)}...`);
+                }
+            }
+    
+            handleIdUpdateMessage(oldSenderId, message) {
+                logInfo('Received ID update message:', message);
+                
+                const parts = message.split(':');
+                if (parts.length !== 3 || parts[0] !== 'ID_UPDATE') {
+                    logError('Invalid ID_UPDATE message format');
+                    return;
+                }
+                
+                const [, confirmedOldId, newSenderId] = parts;
+                
+                if (confirmedOldId !== oldSenderId) {
+                    logError('ID_UPDATE old ID mismatch');
+                    return;
+                }
+                
+                logInfo(`Updating chat partner ID: ${oldSenderId} → ${newSenderId}`);
+                
+                if (this.chats.has(oldSenderId)) {
+                    const chatData = this.chats.get(oldSenderId);
+                    this.chats.delete(oldSenderId);
+                    this.chats.set(newSenderId, chatData);
+                    
+                    logInfo('Chat data migrated to new ID');
+                }
+                
+                const oldChatItem = document.getElementById(`chat-${oldSenderId}`);
+                if (oldChatItem) {
+                    oldChatItem.id = `chat-${newSenderId}`;
+                    
+                    const newChatItem = oldChatItem.cloneNode(true);
+                    newChatItem.addEventListener('click', () => {
+                        this.openChat(newSenderId);
+                    });
+                    
+                    oldChatItem.parentNode.replaceChild(newChatItem, oldChatItem);
+                    
+                    const chatName = newChatItem.querySelector('.chat-name');
+                    if (chatName) {
+                        const newShortId = newSenderId.substring(0, 8) + '...';
+                        chatName.textContent = `👤 ${newShortId}`;
+                    }
+                    
+                    logInfo('Chat item updated in sidebar');
+                }
+                
+                if (this.currentChat === oldSenderId) {
+                    this.currentChat = newSenderId;
+                    
+                    const newShortId = newSenderId.substring(0, 8) + '...';
+                    document.getElementById('chatTitle').textContent = newShortId;
+                    
+                    logInfo('Current chat updated to new ID');
+                }
+                
+                this.showNotification(`🔄 شریک چت ID جدید دریافت کرد: ${newSenderId.substring(0, 8)}...`);
+            }
+    
+            addMessageToChat(clientId, message, type) {
+                logInfo(`Adding ${type} message to chat ${clientId}: "${message.substring(0, 50)}..."`);
+                
+                if (!this.chats.has(clientId)) {
+                    logInfo(`Chat not found in memory, creating new one for: ${clientId}`);
+                    this.chats.set(clientId, {
+                        messages: [],
+                        status: 'active'
+                    });
+                }
+    
+                this.chats.get(clientId).messages.push({
+                    message,
+                    type,
+                    timestamp: Date.now()
+                });
+                
+                logInfo(`Total messages in chat ${clientId}: ${this.chats.get(clientId).messages.length}`);
+            }
+    
+            displayMessage(message, type, timestamp) {
+                const messagesContainer = document.getElementById('messagesContainer');
+                const messageDiv = document.createElement('div');
+                messageDiv.className = `message ${type}`;
+    
+                const time = new Date(timestamp).toLocaleTimeString('fa-IR');
+                messageDiv.innerHTML = `
+                    <div class="message-bubble">
+                        ${message}
+                        <div class="message-time">${time}</div>
+                    </div>
+                `;
+    
+                messagesContainer.appendChild(messageDiv);
+                messagesContainer.scrollTop = messagesContainer.scrollHeight;
+            }
+    
+            updateChatPreview(clientId, lastMessage) {
+                const chatItem = document.getElementById(`chat-${clientId}`);
+                if (chatItem) {
+                    const preview = chatItem.querySelector('.chat-preview');
+                    const timeElement = chatItem.querySelector('.chat-time');
+                    
+                    if (preview) {
+                        preview.textContent = lastMessage.length > 30 ? 
+                            lastMessage.substring(0, 30) + '...' : lastMessage;
+                    }
+                    
+                    if (timeElement) {
+                        timeElement.textContent = new Date().toLocaleTimeString('fa-IR');
+                    }
+                    
+                    logInfo(`Updated chat preview for: ${clientId}`);
+                } else {
+                    logInfo(`Chat item not found for preview update: ${clientId}`);
+                    this.addChatToList(clientId);
+                    setTimeout(() => {
+                        this.updateChatPreview(clientId, lastMessage);
+                    }, 100);
+                }
+            }
+    
+            // ENHANCED: End chat with immediate cleanup
+            async endChat() {
+                if (!this.currentChat) return;
+                
+                if (confirm('آیا مطمئن هستید که می‌خواهید این چت را پایان دهید؟ چت از هر دو طرف حذف خواهد شد.')) {
+                    try {
+                        // Call the enhanced end-chat API
+                        const result = await window.secureAPI.endChat(this.currentChat);
+    
+                        if (result.success) {
+                            // Chat should be cleaned immediately by main process
+                            // UI will be updated via handleChatEndedImmediately event
+                            logInfo('Chat end request sent successfully');
+                        } else {
+                            this.showError('خطا در پایان دادن چت: ' + result.error);
+                        }
+                    } catch (error) {
+                        logError('End chat error:', error);
+                        this.showError('خطا در پایان دادن چت');
+                    }
+                }
+            }
+    
+            handleChatEnded(clientId) {
+                if (this.chats.has(clientId)) {
+                    this.chats.get(clientId).status = 'ended';
+                }
+                this.showNotification(`چت با ${clientId.substring(0, 8)}... پایان یافت`);
+            }
+    
+            handleChatDeleted(clientId) {
+                logInfo('Deleting chat locally:', clientId);
+                
+                this.chats.delete(clientId);
+                this.removeChatFromSidebar(clientId);
+                
+                if (this.currentChat === clientId) {
+                    this.currentChat = null;
+                    document.getElementById('welcomeScreen').style.display = 'flex';
+                    document.getElementById('chatInterface').style.display = 'none';
+                    
+                    const inputContainer = document.querySelector('#message-input-container');
+                    if (inputContainer) {
+                        inputContainer.style.display = 'none';
+                    }
+                }
+            }
+    
+            showNotification(message) {
+                // Throttle notifications to avoid spam
+                if (this.lastNotification && Date.now() - this.lastNotification < 1000) {
+                    return;
+                }
+                this.lastNotification = Date.now();
+    
+                const notification = document.createElement('div');
+                notification.style.cssText = `
+                    position: fixed;
+                    top: 20px;
+                    right: 20px;
+                    background: var(--space-gradient);
+                    color: white;
+                    padding: 15px 20px;
+                    border-radius: 10px;
+                    z-index: 10000;
+                    box-shadow: 0 4px 15px rgba(0, 0, 0, 0.3);
+                    animation: slideIn 0.3s ease;
+                    max-width: 300px;
+                    word-wrap: break-word;
+                `;
+                notification.textContent = message;
+                document.body.appendChild(notification);
+    
+                setTimeout(() => {
+                    if (notification.parentNode) {
+                        notification.remove();
+                    }
+                }, 3000);
+            }
+        }
+    
+        // Window controls
+        function minimizeWindow() {
+            window.secureAPI.minimizeWindow();
+        }
+    
+        function maximizeWindow() {
+            window.secureAPI.maximizeWindow();
+        }
+    
+        function closeWindow() {
+            // Show loading notification
+            if (messenger) {
+                messenger.showNotification('🔄 در حال پایان دادن چت‌ها...');
+            }
+            
+            window.secureAPI.closeWindow();
+        }
+    
+        // Global functions
+        let messenger;
+    
+        function registerUser() {
+            if (messenger) {
+                messenger.registerUser();
+            }
+        }
+    
+        function findClient() {
+            if (messenger) {
+                messenger.findClient();
+            }
+        }
+    
+        function closeFindClientModal() {
+            if (messenger) {
+                messenger.closeFindClientModal();
+            }
+        }
+    
+        function connectToClient() {
+            if (messenger) {
+                messenger.connectToClient();
+            }
+        }
+    
+        function sendMessage(event) {
+            if (messenger) {
+                messenger.sendMessage(event);
+            }
+        }
+    
+        function endChat() {
+            if (messenger) {
+                messenger.endChat();
+            }
+        }
+    
+        function deleteChat() {
+            if (messenger) {
+                messenger.endChat();
+            }
+        }
+    
+        function copyClientId() {
+            const clientId = document.getElementById('clientId').textContent;
+            if (clientId && clientId !== 'در حال اتصال...') {
+                navigator.clipboard.writeText(clientId).then(() => {
+                    if (messenger) {
+                        messenger.showNotification('📋 Client ID کپی شد');
+                    }
+                }).catch(() => {
+                    const textArea = document.createElement('textarea');
+                    textArea.value = clientId;
+                    document.body.appendChild(textArea);
+                    textArea.select();
+                    document.execCommand('copy');
+                    document.body.removeChild(textArea);
+                    if (messenger) {
+                        messenger.showNotification('📋 Client ID کپی شد');
+                    }
+                });
+            }
+        }
+    
+        function handleEnterKey(event) {
+            if (event.key === 'Enter') {
+                connectToClient();
+            }
+        }
+    
+        function showChatMenu() {
+            const menu = document.getElementById('chatMenu');
+            if (menu) {
+                menu.style.display = 'block';
+                
+                setTimeout(() => {
+                    document.addEventListener('click', closeChatMenuOutside);
+                }, 100);
+            }
+        }
+    
+        function closeChatMenu() {
+            const menu = document.getElementById('chatMenu');
+            if (menu) {
+                menu.style.display = 'none';
+            }
+            document.removeEventListener('click', closeChatMenuOutside);
+        }
+    
+        function closeChatMenuOutside(event) {
+            const menu = document.getElementById('chatMenu');
+            if (menu && !menu.contains(event.target)) {
+                closeChatMenu();
+            }
+        }
+    
+        function toggleSendButton() {
+            const messageInput = document.getElementById('messageInput');
+            const sendBtn = document.querySelector('.send-btn');
+            
+            if (messageInput && sendBtn && !messageInput.disabled) {
+                if (messageInput.value.trim().length > 0) {
+                    sendBtn.style.opacity = '1';
+                    sendBtn.style.transform = 'scale(1)';
+                    sendBtn.style.pointerEvents = 'auto';
+                } else {
+                    sendBtn.style.opacity = '0.5';
+                    sendBtn.style.transform = 'scale(0.8)';
+                    sendBtn.style.pointerEvents = 'none';
+                }
+            }
+        }
+    
+        function handleMessageKeyPress(event) {
+            if (event.key === 'Enter' && !event.shiftKey) {
+                event.preventDefault();
+                const messageInput = document.getElementById('messageInput');
+                if (messageInput && messageInput.value.trim().length > 0 && !messageInput.disabled) {
+                    const form = document.querySelector('.message-input-form');
+                    if (form) {
+                        form.dispatchEvent(new Event('submit', { cancelable: true }));
+                    }
+                }
+            }
+        }
+    
+        // File handling functions
+        function selectFile() {
+            if (messenger) {
+                messenger.selectFile();
+            }
+        }
+    
+        function handleFileSelect(event) {
+            if (messenger) {
+                messenger.handleFileSelect(event);
+            }
+        }
+    
+        function cancelFileUpload() {
+            if (messenger) {
+                messenger.cancelFileUpload();
+            }
+        }
+    
+        function downloadFile(fileName, fileType, fileData) {
+            if (messenger) {
+                messenger.downloadFile(fileName, fileType, fileData);
+            }
+        }
+    
+        function openImagePreview(imageDataUrl, fileName) {
+            const modal = document.createElement('div');
+            modal.style.cssText = `
+                position: fixed;
+                top: 0;
+                left: 0;
+                width: 100%;
+                height: 100%;
+                background: rgba(0, 0, 0, 0.9);
+                display: flex;
+                align-items: center;
+                justify-content: center;
+                z-index: 10000;
+                backdrop-filter: blur(5px);
+            `;
+            
+            modal.innerHTML = `
+                <div style="position: relative; max-width: 90%; max-height: 90%;">
+                    <img src="${imageDataUrl}" alt="${fileName}" style="max-width: 100%; max-height: 100%; object-fit: contain;">
+                    <button onclick="this.parentElement.parentElement.remove()" style="
+                        position: absolute;
+                        top: -40px;
+                        right: 0;
+                        background: rgba(255, 255, 255, 0.2);
+                        border: none;
+                        color: white;
+                        font-size: 24px;
+                        width: 40px;
+                        height: 40px;
+                        border-radius: 50%;
+                        cursor: pointer;
+                        display: flex;
+                        align-items: center;
+                        justify-content: center;
+                    ">✖</button>
+                    <div style="
+                        position: absolute;
+                        bottom: -40px;
+                        left: 0;
+                        right: 0;
+                        color: white;
+                        text-align: center;
+                        font-size: 14px;
+                        background: rgba(0, 0, 0, 0.5);
+                        padding: 8px;
+                        border-radius: 5px;
+                    ">${fileName}</div>
+                </div>
+            `;
+            
+            modal.addEventListener('click', (e) => {
+                if (e.target === modal) {
+                    modal.remove();
+                }
+            });
+            
+            document.body.appendChild(modal);
+        }
+    
+        function properRegenerateId() {
+            logInfo('Proper regenerate ID called');
+            
+            if (!messenger) {
+                alert('برنامه هنوز آماده نیست. لطفاً کمی صبر کنید.');
+                return;
+            }
+            
+            if (!messenger.clientId || messenger.clientId === 'در حال اتصال...') {
+                alert('لطفاً ابتدا وارد شوید و Client ID دریافت کنید.');
+                return;
+            }
+            
+            const modal = document.getElementById('regenerateIdModal');
+            if (modal) {
+                modal.style.display = 'flex';
+            }
+        }
+    
+        function confirmRegenerateId() {
+            logInfo('Confirm regenerate ID called');
+            if (messenger) {
+                messenger.regenerateClientId();
+            }
+        }
+    
+        function closeRegenerateIdModal() {
+            logInfo('Close regenerate modal called');
+            if (messenger) {
+                messenger.closeRegenerateIdModal();
+            } else {
+                const modal = document.getElementById('regenerateIdModal');
+                if (modal) {
+                    modal.style.display = 'none';
+                }
+            }
+        }
+    
+        // Initialize app
+        document.addEventListener('DOMContentLoaded', () => {
+            logInfo('DOM loaded, initializing messenger...');
+            messenger = new SecureMessenger();
+            
+            // Make messenger globally accessible for debugging
+            if (DEBUG_MODE) {
+                window.messenger = messenger;
+            }
+        });
+    </script>
+</body>
+</html>
