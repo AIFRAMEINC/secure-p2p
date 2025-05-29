@@ -17,30 +17,33 @@ class SecureP2PClient {
         this.window = null;
         this.clientId = null;
         this.username = null;
-        this.serverUrl = 'https://indust.aiframe.org'; // ✅ HTTPS
-        this.p2pServer = null;
-        this.p2pPort = null;
-        this.connections = new Map();
+        this.serverUrl = 'https://indust.aiframe.org';
         this.websocket = null;
         this.heartbeatInterval = null;
         this.cryptoManager = new CryptoManager();
         this.activeChats = new Map();
         this.fileChunks = new Map();
         this.messageBuffers = new Map();
-        
-        // NEW: Activity tracking and cleanup
-        this.chatActivities = new Map(); // Track last activity per chat
-        this.cleanupInterval = null; // Auto-cleanup timer
-        this.INACTIVE_TIMEOUT = 10 * 60 * 1000; // 10 minutes in milliseconds
-        this.CLEANUP_CHECK_INTERVAL = 2 * 60 * 1000; // Check every 2 minutes
-        this.isClosing = false; // Prevent multiple close events
+        this.chatActivities = new Map();
+        this.cleanupInterval = null;
+        this.INACTIVE_TIMEOUT = 10 * 60 * 1000;
+        this.CLEANUP_CHECK_INTERVAL = 2 * 60 * 1000;
+        this.isClosing = false;
     }
 
     async initialize() {
         this.createWindow();
         this.setupIPC();
         await this.initializeCrypto();
-        this.startActivityCleanup(); // NEW: Start auto-cleanup
+        this.startActivityCleanup();
+    
+        // Check if clientId exists, otherwise wait for registration
+        if (!this.clientId) {
+            logInfo('No clientId found, waiting for registration...');
+            // Registration will be handled via IPC 'register-client'
+        } else {
+            await this.connectToServer();
+        }
     }
 
     createWindow() {
@@ -179,7 +182,7 @@ class SecureP2PClient {
                     rsa_public_key: keys.rsa,
                     ecc_public_key: keys.ecc
                 });
-
+        
                 if (response.data.success) {
                     this.clientId = response.data.client_id;
                     logInfo(`Client registered with ID: ${this.clientId}`);
@@ -427,22 +430,31 @@ class SecureP2PClient {
                 logInfo(`Recipient ${recipientId} not found for PD message - proceeding with local cleanup`);
                 return { success: true, message: 'Recipient offline, local cleanup only' };
             }
-
+    
             // Encrypt and send PD message
             const encryptedMessage = await this.cryptoManager.tripleEncrypt(
                 'PD',
                 recipientInfo.data.client_info.rsa_public_key,
                 recipientInfo.data.client_info.ecc_public_key
             );
-
-            await this.sendP2PMessageWithFraming(recipientInfo.data.client_info, encryptedMessage);
-            
+    
+            if (this.websocket && this.websocket.readyState === WebSocket.OPEN) {
+                this.websocket.send(JSON.stringify({
+                    type: 'message',
+                    sender_id: this.clientId,
+                    recipient_id: recipientId,
+                    encrypted_message: encryptedMessage,
+                    timestamp: Date.now()
+                }));
+            } else {
+                logInfo('WebSocket not connected, proceeding with local cleanup');
+                return { success: true, message: 'WebSocket not connected, local cleanup only' };
+            }
+    
             logInfo(`PD message sent successfully to: ${recipientId}`);
             return { success: true };
-            
         } catch (error) {
             logError('Error sending PD message:', error);
-            // Even if PD fails to send, we still clean up locally
             return { success: true, message: 'PD send failed but local cleanup will proceed' };
         }
     }
@@ -473,7 +485,6 @@ class SecureP2PClient {
         logInfo(`Immediate cleanup completed for: ${clientId}`);
     }
 
-    // Chunked file sending for large files
     async sendLargeFile(fileMessage, recipientInfo) {
         try {
             const parsedFile = JSON.parse(fileMessage);
@@ -481,12 +492,10 @@ class SecureP2PClient {
             const chunkSize = 512 * 1024; // 512KB chunks
             const totalChunks = Math.ceil(fileData.length / chunkSize);
             const fileId = crypto.randomUUID();
-            
+    
             log(`Sending large file in ${totalChunks} chunks`);
-
-            // Update activity
             this.updateChatActivity(recipientInfo.client_id);
-
+    
             // Send file header first
             const headerMessage = {
                 type: 'file_header',
@@ -497,21 +506,31 @@ class SecureP2PClient {
                 totalChunks: totalChunks,
                 timestamp: parsedFile.timestamp
             };
-
+    
             const encryptedHeader = await this.cryptoManager.tripleEncrypt(
                 JSON.stringify(headerMessage),
                 recipientInfo.rsa_public_key,
                 recipientInfo.ecc_public_key
             );
-
-            await this.sendP2PMessageWithFraming(recipientInfo, encryptedHeader);
-            
-            // Send chunks with delay to prevent overwhelming
+    
+            if (this.websocket && this.websocket.readyState === WebSocket.OPEN) {
+                this.websocket.send(JSON.stringify({
+                    type: 'message',
+                    sender_id: this.clientId,
+                    recipient_id: recipientInfo.client_id,
+                    encrypted_message: encryptedHeader,
+                    timestamp: Date.now()
+                }));
+            } else {
+                throw new Error('WebSocket not connected');
+            }
+    
+            // Send chunks with delay
             for (let i = 0; i < totalChunks; i++) {
                 const start = i * chunkSize;
                 const end = Math.min(start + chunkSize, fileData.length);
                 const chunk = fileData.slice(start, end);
-
+    
                 const chunkMessage = {
                     type: 'file_chunk',
                     fileId: fileId,
@@ -519,74 +538,90 @@ class SecureP2PClient {
                     chunkData: chunk,
                     isLastChunk: i === totalChunks - 1
                 };
-
+    
                 const encryptedChunk = await this.cryptoManager.tripleEncrypt(
                     JSON.stringify(chunkMessage),
                     recipientInfo.rsa_public_key,
                     recipientInfo.ecc_public_key
                 );
-
-                await this.sendP2PMessageWithFraming(recipientInfo, encryptedChunk);
-                
-                // Small delay between chunks to prevent overwhelming
+    
+                if (this.websocket && this.websocket.readyState === WebSocket.OPEN) {
+                    this.websocket.send(JSON.stringify({
+                        type: 'message',
+                        sender_id: this.clientId,
+                        recipient_id: recipientInfo.client_id,
+                        encrypted_message: encryptedChunk,
+                        timestamp: Date.now()
+                    }));
+                } else {
+                    throw new Error('WebSocket not connected');
+                }
+    
                 if (i < totalChunks - 1) {
                     await new Promise(resolve => setTimeout(resolve, 50));
                 }
-                
-                // Update progress
+    
                 this.window.webContents.send('file-send-progress', {
                     progress: ((i + 1) / totalChunks) * 100
                 });
             }
-
-            // Store in active chats
+    
             this.storeMessage(recipientInfo.client_id, fileMessage, 'sent');
-            
             log(`Large file sent successfully: ${parsedFile.fileName}`);
             return { success: true };
-
         } catch (error) {
             logError('Large file send error:', error);
             return { success: false, error: error.message };
         }
     }
 
-    // Regular message sending
     async sendRegularMessage(message, recipientInfo) {
         try {
             // Update activity
             this.updateChatActivity(recipientInfo.client_id);
-            
+    
             const encryptedMessage = await this.cryptoManager.tripleEncrypt(
                 message,
                 recipientInfo.rsa_public_key,
                 recipientInfo.ecc_public_key
             );
-
-            await this.sendP2PMessageWithFraming(recipientInfo, encryptedMessage);
+    
+            if (this.websocket && this.websocket.readyState === WebSocket.OPEN) {
+                this.websocket.send(JSON.stringify({
+                    type: 'message',
+                    sender_id: this.clientId,
+                    recipient_id: recipientInfo.client_id,
+                    encrypted_message: encryptedMessage,
+                    timestamp: Date.now()
+                }));
+            } else {
+                throw new Error('WebSocket not connected');
+            }
+    
             this.storeMessage(recipientInfo.client_id, message, 'sent');
-            
             return { success: true };
         } catch (error) {
+            logError('Send regular message error:', error);
             throw error;
         }
     }
 
     async connectToServer() {
         try {
-            await this.startP2PServer();
+            if (!this.clientId) {
+                logError('Cannot connect to server: clientId is null');
+                return;
+            }
+    
             const localIP = await this.getLocalIP();
-            
-            log(`Connecting to server with port: ${this.p2pPort} and IP: ${localIP}`);
-            
             const response = await axios.post(`${this.serverUrl}/connect`, null, {
                 params: {
                     client_id: this.clientId,
                     ip_address: localIP,
-                    port: this.p2pPort
+                    port: 0
                 }
             });
-
+    
             if (response.data.success) {
                 logInfo('Successfully connected to server');
                 
@@ -597,9 +632,13 @@ class SecureP2PClient {
                 
                 this.websocket.on('open', () => {
                     logInfo('WebSocket connected successfully');
+                    this.websocket.send(JSON.stringify({
+                        type: 'register',
+                        client_id: this.clientId
+                    }));
                     this.startHeartbeat();
                 });
-
+    
                 this.websocket.on('message', (data) => {
                     try {
                         const message = JSON.parse(data);
@@ -608,18 +647,14 @@ class SecureP2PClient {
                         logError('WebSocket message parse error:', error);
                     }
                 });
-
-                this.websocket.on('close', (code, reason) => {
-                    log(`WebSocket disconnected: ${code} - ${reason}`);
+    
+                this.websocket.on('close', () => {
+                    logInfo('WebSocket disconnected, reconnecting...');
+                    setTimeout(() => this.reconnectWebSocket(), 5000);
                 });
-
+    
                 this.websocket.on('error', (error) => {
                     logError('WebSocket error:', error);
-                    setTimeout(() => {
-                        if (this.clientId) {
-                            this.reconnectWebSocket();
-                        }
-                    }, 5000);
                 });
             }
         } catch (error) {
@@ -693,180 +728,7 @@ class SecureP2PClient {
         }
     }
 
-    // P2P Server with Message Framing
-    async startP2PServer() {
-        return new Promise((resolve, reject) => {
-            this.p2pServer = net.createServer((socket) => {
-                log('P2P client connected');
-                
-                // Create buffer for this specific socket connection
-                const socketKey = `${socket.remoteAddress}:${socket.remotePort}`;
-                this.messageBuffers.set(socketKey, Buffer.alloc(0));
-                
-                socket.on('data', async (data) => {
-                    try {
-                        await this.handleIncomingData(socket, data);
-                    } catch (error) {
-                        logError('P2P message error:', error);
-                    }
-                });
 
-                socket.on('close', () => {
-                    log('P2P client disconnected');
-                    // Clean up buffer for this socket
-                    this.messageBuffers.delete(socketKey);
-                });
-
-                socket.on('error', (error) => {
-                    logError('P2P socket error:', error);
-                    this.messageBuffers.delete(socketKey);
-                });
-            });
-
-            this.p2pServer.on('error', (error) => {
-                logError('P2P server error:', error);
-                reject(error);
-            });
-
-            this.p2pServer.listen(0, () => {
-                this.p2pPort = this.p2pServer.address().port;
-                logInfo(`P2P server listening on port ${this.p2pPort}`);
-                resolve();
-            });
-        });
-    }
-
-    // Handle incoming TCP data with proper message framing
-    async handleIncomingData(socket, data) {
-        const socketKey = `${socket.remoteAddress}:${socket.remotePort}`;
-        
-        // Append new data to existing buffer
-        let buffer = this.messageBuffers.get(socketKey) || Buffer.alloc(0);
-        buffer = Buffer.concat([buffer, data]);
-        
-        // Process complete messages from buffer
-        while (buffer.length >= 4) { // At least 4 bytes for length prefix
-            // Read message length (first 4 bytes, big-endian)
-            const messageLength = buffer.readUInt32BE(0);
-            
-            // Check if we have the complete message
-            if (buffer.length >= 4 + messageLength) {
-                // Extract the complete message
-                const messageBuffer = buffer.slice(4, 4 + messageLength);
-                const messageString = messageBuffer.toString('utf8');
-                
-                // Remove processed message from buffer
-                buffer = buffer.slice(4 + messageLength);
-                
-                // Process the complete message
-                try {
-                    const message = JSON.parse(messageString);
-                    await this.handleP2PMessage(message);
-                } catch (error) {
-                    logError('Error parsing complete message:', error);
-                }
-            } else {
-                // Incomplete message, wait for more data
-                break;
-            }
-        }
-        
-        // Update buffer
-        this.messageBuffers.set(socketKey, buffer);
-    }
-
-    // Send P2P message with proper framing
-    async sendP2PMessageWithFraming(recipientInfo, encryptedMessage) {
-        return new Promise((resolve, reject) => {
-            const client = net.createConnection(recipientInfo.port, recipientInfo.ip_address);
-            
-            client.on('connect', () => {
-                const messageData = {
-                    type: 'encrypted_message',
-                    sender_id: this.clientId,
-                    recipient_id: recipientInfo.client_id,
-                    message: encryptedMessage,
-                    timestamp: Date.now()
-                };
-                
-                // Convert message to JSON string
-                const messageString = JSON.stringify(messageData);
-                const messageBuffer = Buffer.from(messageString, 'utf8');
-                
-                // Create length prefix (4 bytes, big-endian)
-                const lengthBuffer = Buffer.allocUnsafe(4);
-                lengthBuffer.writeUInt32BE(messageBuffer.length, 0);
-                
-                // Send length prefix + message
-                const completeMessage = Buffer.concat([lengthBuffer, messageBuffer]);
-                client.write(completeMessage);
-                client.end();
-                
-                // Notify via WebSocket
-                if (this.websocket && this.websocket.readyState === WebSocket.OPEN) {
-                    this.websocket.send(JSON.stringify({
-                        type: 'message_notification',
-                        recipient_id: recipientInfo.client_id,
-                        sender_id: this.clientId,
-                        timestamp: Date.now()
-                    }));
-                }
-                
-                resolve();
-            });
-
-            client.on('error', (error) => {
-                logError('P2P connection error:', error);
-                reject(error);
-            });
-        });
-    }
-
-    // Handle P2P messages with activity tracking
-    async handleP2PMessage(message) {
-        if (message.type === 'encrypted_message') {
-            try {
-                const decryptedMessage = await this.cryptoManager.tripleDecrypt(message.message);
-                
-                // Update activity for this chat (received message)
-                this.updateChatActivity(message.sender_id);
-                
-                // Check for secret termination message
-                if (decryptedMessage === 'PD') {
-                    logInfo('Received PD signal from:', message.sender_id);
-                    
-                    // Clean up chat for PD message
-                    this.handlePDReceived(message.sender_id);
-                    return;
-                }
-                
-                // Handle chunked file messages
-                const messageObj = this.tryParseJSON(decryptedMessage);
-                
-                if (messageObj && messageObj.type === 'file_header') {
-                    return this.handleFileHeader(messageObj, message.sender_id);
-                }
-                
-                if (messageObj && messageObj.type === 'file_chunk') {
-                    return this.handleFileChunk(messageObj, message.sender_id, message.timestamp);
-                }
-                
-                // Regular message handling
-                this.storeMessage(message.sender_id, decryptedMessage, 'received');
-                
-                this.window.webContents.send('new-message', {
-                    senderId: message.sender_id,
-                    message: decryptedMessage,
-                    timestamp: message.timestamp
-                });
-                
-                log(`Message received and decrypted successfully from ${message.sender_id}`);
-                
-            } catch (error) {
-                logError('Message decryption error:', error);
-            }
-        }
-    }
 
     // NEW: Handle received PD message
     handlePDReceived(senderId) {
@@ -991,34 +853,76 @@ class SecureP2PClient {
 
     handleWebSocketMessage(message) {
         switch (message.type) {
-            case 'heartbeat_ack':
-                // Handle heartbeat response
+            case 'register_ack':
+                logInfo('Registered with server');
                 break;
-                
-            case 'new_message':
-                this.window.webContents.send('message-notification', message);
+            case 'message':
+                this.handleIncomingMessage(message);
                 break;
-                
-            case 'user_disconnected':
-                log('User disconnected:', message.sender_id);
+            case 'message_ack':
+                logInfo('Message sent successfully');
                 break;
+            case 'error':
+                logError('Server error:', message.message);
+                this.window.webContents.send('error', { message: message.message });
+                break;
+            default:
+                log(`Unknown message type: ${message.type}`); // Replaced logWarn with log
+        }
+    }
+
+    async handleIncomingMessage(message) {
+        try {
+            const decryptedMessage = await this.cryptoManager.tripleDecrypt(message.encrypted_message);
+            this.updateChatActivity(message.sender_id);
+    
+            if (decryptedMessage === 'PD') {
+                logInfo('Received PD signal from:', message.sender_id);
+                this.handlePDReceived(message.sender_id);
+                return;
+            }
+    
+            const messageObj = this.tryParseJSON(decryptedMessage);
+    
+            if (messageObj && messageObj.type === 'file_header') {
+                return this.handleFileHeader(messageObj, message.sender_id);
+            }
+    
+            if (messageObj && messageObj.type === 'file_chunk') {
+                return this.handleFileChunk(messageObj, message.sender_id, message.timestamp);
+            }
+    
+            this.storeMessage(message.sender_id, decryptedMessage, 'received');
+            this.window.webContents.send('new-message', {
+                senderId: message.sender_id,
+                message: decryptedMessage,
+                timestamp: message.timestamp
+            });
+            logInfo(`Message received and decrypted successfully from ${message.sender_id}`);
+        } catch (error) {
+            logError('Message decryption error:', error);
+            this.window.webContents.send('error', { message: 'Failed to decrypt message' });
         }
     }
 
     async reconnectWebSocket() {
         if (!this.clientId) return;
-        
+    
         try {
-            log('Attempting to reconnect WebSocket...');
-            const wsUrl = this.serverUrl.replace('http://', 'ws://') + `/ws/${this.clientId}`;
-            
+            logInfo('Attempting to reconnect WebSocket...');
+            const wsUrl = this.serverUrl.replace('https://', 'wss://') + `/ws/${this.clientId}`;
+    
             this.websocket = new WebSocket(wsUrl);
-            
+    
             this.websocket.on('open', () => {
                 logInfo('WebSocket reconnected successfully');
+                this.websocket.send(JSON.stringify({
+                    type: 'register',
+                    client_id: this.clientId
+                }));
                 this.startHeartbeat();
             });
-
+    
             this.websocket.on('message', (data) => {
                 try {
                     const message = JSON.parse(data);
@@ -1027,17 +931,18 @@ class SecureP2PClient {
                     logError('WebSocket message parse error:', error);
                 }
             });
-
-            this.websocket.on('close', (code, reason) => {
-                log(`WebSocket disconnected: ${code} - ${reason}`);
+    
+            this.websocket.on('close', () => {
+                logInfo('WebSocket disconnected, scheduling reconnect...');
+                setTimeout(() => this.reconnectWebSocket(), 5000);
             });
-
+    
             this.websocket.on('error', (error) => {
                 logError('WebSocket reconnection error:', error);
             });
-            
         } catch (error) {
             logError('WebSocket reconnection failed:', error);
+            setTimeout(() => this.reconnectWebSocket(), 5000);
         }
     }
 

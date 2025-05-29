@@ -1,5 +1,5 @@
 {
-  "name": "secure-p2p-messenger",
+  "name": "hid-messenger",
   "version": "1.1.0",
   "description": "یک پیام‌رسان امن P2P با رمزنگاری سه‌لایه و پشتیبانی فایل‌های بزرگ",
   "main": "main.js",
@@ -10,7 +10,6 @@
     "build": "electron-builder",
     "build-win": "electron-builder --win",
     "build-linux": "electron-builder --linux",
-    "build-mac": "electron-builder --mac",
     "pack": "electron-builder --dir",
     "dist": "npm run build",
     "postinstall": "electron-builder install-app-deps",
@@ -26,22 +25,22 @@
     "file-transfer",
     "chunked-upload"
   ],
-  "author": "Your Name",
+  "author": "rAI security hub",
   "license": "MIT",
   "devDependencies": {
-    "electron": "^27.0.0",
-    "electron-builder": "^24.6.4",
-    "electron-rebuild": "^3.2.9",
     "cross-env": "^7.0.3",
+    "electron": "^27.0.0",
+    "electron-builder": "^24.13.3",
+    "electron-rebuild": "^3.2.9",
     "rimraf": "^5.0.5"
   },
   "dependencies": {
     "axios": "^1.5.0",
-    "ws": "^8.14.2"
+    "ws": "^8.18.2"
   },
   "build": {
     "appId": "com.secure.p2p.messenger",
-    "productName": "Secure P2P Messenger",
+    "productName": "Hid Messenger",
     "directories": {
       "output": "dist"
     },
@@ -68,40 +67,41 @@
       "target": [
         {
           "target": "nsis",
-          "arch": ["x64", "ia32"]
+          "arch": [
+            "x64",
+            "ia32"
+          ]
         },
         {
           "target": "portable",
-          "arch": ["x64"]
+          "arch": [
+            "x64"
+          ]
         }
       ],
       "icon": "assets/icon.ico",
       "artifactName": "${productName}-${version}-${arch}.${ext}",
-      "requestedExecutionLevel": "asInvoker"
+      "requestedExecutionLevel": "asInvoker",
+      "sign": false,
+      "signingHashAlgorithms": []
     },
     "linux": {
       "target": [
         {
           "target": "AppImage",
-          "arch": ["x64"]
+          "arch": [
+            "x64"
+          ]
         },
         {
           "target": "deb",
-          "arch": ["x64"]
+          "arch": [
+            "x64"
+          ]
         }
       ],
       "icon": "assets/icon.png",
       "category": "Network"
-    },
-    "mac": {
-      "target": [
-        {
-          "target": "dmg",
-          "arch": ["x64", "arm64"]
-        }
-      ],
-      "icon": "assets/icon.icns",
-      "category": "public.app-category.social-networking"
     },
     "nsis": {
       "oneClick": false,
@@ -119,11 +119,14 @@
       {
         "from": "assets/",
         "to": "assets/",
-        "filter": ["**/*"]
+        "filter": [
+          "**/*"
+        ]
       }
     ],
     "extraMetadata": {
-      "main": "main.js"
+      "main": "main.js",
+      "icon": "assets/icon.ico"
     }
   },
   "engines": {

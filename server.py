@@ -1,4 +1,4 @@
-# server.py - FastAPI Server for Secure P2P Messaging - OPTIMIZED VERSION
+# server.py - FastAPI Server for Secure Messaging - WebSocket Relay
 from fastapi import FastAPI, HTTPException, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
@@ -8,14 +8,11 @@ import uuid
 import json
 import asyncio
 from datetime import datetime, timedelta
-import uvicorn
-from cryptography.hazmat.primitives import hashes
-from cryptography.hazmat.primitives.asymmetric import rsa, ec
-from cryptography.hazmat.primitives import serialization
 import logging
 import os
+import uvicorn
 
-# OPTIMIZED: Configure logging based on environment
+# Configure logging based on environment
 DEBUG_MODE = os.getenv('DEBUG', 'False').lower() == 'true'
 
 if DEBUG_MODE:
@@ -28,7 +25,7 @@ logger = logging.getLogger(__name__)
 # Reduce uvicorn logging
 logging.getLogger("uvicorn.access").setLevel(logging.WARNING)
 
-app = FastAPI(title="Secure P2P Messaging Server", version="1.0.0")
+app = FastAPI(title="Secure Messaging Server", version="2.0.0")
 
 # CORS middleware
 app.add_middleware(
@@ -70,7 +67,7 @@ active_clients: Dict[str, ClientInfo] = {}
 websocket_connections: Dict[str, WebSocket] = {}
 
 class DatabaseManager:
-    def __init__(self, db_path: str = "secure_p2p.db"):
+    def __init__(self, db_path: str = "secure_messaging.db"):
         self.db_path = db_path
         self.init_database()
 
@@ -96,8 +93,8 @@ class DatabaseManager:
         cursor.execute('''
             CREATE TABLE IF NOT EXISTS active_sessions (
                 client_id TEXT PRIMARY KEY,
-                ip_address TEXT NOT NULL,
-                port INTEGER NOT NULL,
+                ip_address TEXT,
+                port INTEGER,
                 session_start TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
                 FOREIGN KEY (client_id) REFERENCES clients (client_id)
             )
@@ -392,90 +389,121 @@ async def get_active_clients():
 
 @app.websocket("/ws/{client_id}")
 async def websocket_endpoint(websocket: WebSocket, client_id: str):
-    """WebSocket endpoint for real-time communication"""
+    """WebSocket endpoint for message relaying"""
     try:
         await websocket.accept()
         websocket_connections[client_id] = websocket
         if DEBUG_MODE:
             logger.info(f"WebSocket connected for client: {client_id}")
-        
+
         # Update last seen
         if client_id in active_clients:
             active_clients[client_id].last_seen = datetime.now()
-        
+
         while True:
             try:
                 data = await websocket.receive_text()
                 message = json.loads(data)
-                
-                # Handle different message types
-                if message["type"] == "heartbeat":
+
+                if message["type"] == "register":
+                    if message.get("client_id") == client_id:
+                        if DEBUG_MODE:
+                            logger.info(f"Client registered via WebSocket: {client_id}")
+                        await websocket.send_text(json.dumps({
+                            "type": "register_ack",
+                            "success": True
+                        }))
+                    else:
+                        await websocket.send_text(json.dumps({
+                            "type": "error",
+                            "message": "Invalid client_id"
+                        }))
+
+                elif message["type"] == "message":
+                    recipient_id = message.get("recipient_id")
+                    if recipient_id in websocket_connections:
+                        try:
+                            await websocket_connections[recipient_id].send_text(json.dumps({
+                                "type": "message",
+                                "sender_id": message.get("sender_id"),
+                                "encrypted_message": message.get("encrypted_message"),
+                                "timestamp": message.get("timestamp")
+                            }))
+                            if DEBUG_MODE:
+                                logger.info(f"Message forwarded from {message.get('sender_id')} to {recipient_id}")
+                            await websocket.send_text(json.dumps({
+                                "type": "message_ack",
+                                "success": True
+                            }))
+                        except Exception as e:
+                            logger.error(f"Error forwarding message: {e}")
+                            await websocket.send_text(json.dumps({
+                                "type": "error",
+                                "message": f"Failed to forward message to {recipient_id}"
+                            }))
+                            if recipient_id in websocket_connections:
+                                del websocket_connections[recipient_id]
+                    else:
+                        await websocket.send_text(json.dumps({
+                            "type": "error",
+                            "message": f"Recipient {recipient_id} not found"
+                        }))
+                        if DEBUG_MODE:
+                            logger.warning(f"Recipient {recipient_id} not found")
+
+                elif message["type"] == "heartbeat":
                     await websocket.send_text(json.dumps({
                         "type": "heartbeat_ack",
                         "timestamp": datetime.now().isoformat()
                     }))
-                    
-                    # Update last seen
                     if client_id in active_clients:
                         active_clients[client_id].last_seen = datetime.now()
-                
-                elif message["type"] == "message_notification":
-                    # Notify recipient about new message
-                    recipient_id = message.get("recipient_id")
-                    if recipient_id and recipient_id in websocket_connections:
-                        try:
-                            await websocket_connections[recipient_id].send_text(json.dumps({
-                                "type": "new_message",
-                                "sender_id": client_id,
-                                "timestamp": datetime.now().isoformat()
-                            }))
-                        except Exception as e:
-                            logger.error(f"Error sending notification: {e}")
-                            # Remove broken connection
-                            if recipient_id in websocket_connections:
-                                del websocket_connections[recipient_id]
-            
+
+                else:
+                    await websocket.send_text(json.dumps({
+                        "type": "error",
+                        "message": "Invalid message type"
+                    }))
+
             except WebSocketDisconnect:
                 break
             except Exception as e:
                 logger.error(f"WebSocket message error: {e}")
                 break
-    
+
     except Exception as e:
         logger.error(f"WebSocket connection error: {e}")
-    
+
     finally:
-        # Clean up
         if client_id in websocket_connections:
             del websocket_connections[client_id]
         if DEBUG_MODE:
             logger.info(f"WebSocket disconnected: {client_id}")
 
-# OPTIMIZED: Cleanup task with reduced frequency
 @app.on_event("startup")
 async def startup_event():
     if DEBUG_MODE:
-        logger.info("Starting Secure P2P Messaging Server...")
+        logger.info("Starting Secure Messaging Server...")
     asyncio.create_task(cleanup_inactive_clients())
 
 async def cleanup_inactive_clients():
     """Remove clients that haven't been seen for a while"""
     while True:
-        await asyncio.sleep(120)  # Check every 2 minutes instead of 1
-        
+        await asyncio.sleep(120)  # Check every 2 minutes
+
         current_time = datetime.now()
         inactive_clients = []
-        
+
         for client_id, client_info in active_clients.items():
-            if current_time - client_info.last_seen > timedelta(minutes=10):  # Increased to 10 minutes
+            if current_time - client_info.last_seen > timedelta(minutes=10):
                 inactive_clients.append(client_id)
-        
+
         for client_id in inactive_clients:
             if DEBUG_MODE:
                 logger.info(f"Removing inactive client: {client_id}")
             del active_clients[client_id]
             db_manager.remove_session(client_id)
-            
+
             if client_id in websocket_connections:
                 try:
                     await websocket_connections[client_id].close()
@@ -497,8 +525,8 @@ async def health_check():
 async def root():
     """Root endpoint"""
     return {
-        "message": "Secure P2P Messaging Server",
-        "version": "1.0.0",
+        "message": "Secure Messaging Server",
+        "version": "2.0.0",
         "status": "running",
         "active_clients": len(active_clients)
     }
@@ -508,8 +536,8 @@ if __name__ == "__main__":
         "server:app",
         host="0.0.0.0",
         port=8000,
-        reload=DEBUG_MODE,  # Only reload in debug mode
-        access_log=DEBUG_MODE,  # Disable access logs in production
+        reload=DEBUG_MODE,
+        access_log=DEBUG_MODE,
         ssl_keyfile=None,
         ssl_certfile=None
     )
