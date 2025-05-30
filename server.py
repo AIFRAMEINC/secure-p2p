@@ -41,12 +41,14 @@ class ClientRegistration(BaseModel):
     client_name: str
     rsa_public_key: str
     ecc_public_key: str
+    dh_public_key: str  # کلید عمومی DH
 
 class ClientIdRegeneration(BaseModel):
     old_client_id: str
     client_name: str
     rsa_public_key: str
     ecc_public_key: str
+    dh_public_key: str  # کلید عمومی DH
 
 class ClientInfo(BaseModel):
     client_id: str
@@ -55,6 +57,7 @@ class ClientInfo(BaseModel):
     port: int
     rsa_public_key: str
     ecc_public_key: str
+    dh_public_key: str  # کلید عمومی DH
     last_seen: datetime
 
 class MessageRequest(BaseModel):
@@ -83,6 +86,7 @@ class DatabaseManager:
                 client_name TEXT NOT NULL,
                 rsa_public_key TEXT NOT NULL,
                 ecc_public_key TEXT NOT NULL,
+                dh_public_key TEXT NOT NULL, -- ستون برای کلید DH
                 created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
                 last_active TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
                 revoked_at TIMESTAMP NULL
@@ -102,18 +106,17 @@ class DatabaseManager:
         
         conn.commit()
         conn.close()
-
-    def register_client(self, client_name: str, rsa_key: str, ecc_key: str) -> str:
-        """Register a new client and return client_id"""
+        
+    def register_client(self, client_name: str, rsa_key: str, ecc_key: str, dh_key: str) -> str:
         client_id = str(uuid.uuid4())
         
         conn = sqlite3.connect(self.db_path)
         cursor = conn.cursor()
         
         cursor.execute('''
-            INSERT INTO clients (client_id, client_name, rsa_public_key, ecc_public_key)
-            VALUES (?, ?, ?, ?)
-        ''', (client_id, client_name, rsa_key, ecc_key))
+            INSERT INTO clients (client_id, client_name, rsa_public_key, ecc_public_key, dh_public_key)
+            VALUES (?, ?, ?, ?, ?)
+        ''', (client_id, client_name, rsa_key, ecc_key, dh_key))
         
         conn.commit()
         conn.close()
@@ -123,12 +126,11 @@ class DatabaseManager:
         return client_id
 
     def get_client_keys(self, client_id: str) -> Optional[tuple]:
-        """Get client's public keys"""
         conn = sqlite3.connect(self.db_path)
         cursor = conn.cursor()
         
         cursor.execute('''
-            SELECT rsa_public_key, ecc_public_key FROM clients 
+            SELECT rsa_public_key, ecc_public_key, dh_public_key FROM clients 
             WHERE client_id = ? AND revoked_at IS NULL
         ''', (client_id,))
         
@@ -160,28 +162,24 @@ class DatabaseManager:
         conn.commit()
         conn.close()
 
-    def regenerate_client_id(self, old_client_id: str, client_name: str, rsa_key: str, ecc_key: str) -> str:
-        """Regenerate client ID - mark old as revoked and create new one"""
+    def regenerate_client_id(self, old_client_id: str, client_name: str, rsa_key: str, ecc_key: str, dh_key: str) -> str:
         new_client_id = str(uuid.uuid4())
         
         conn = sqlite3.connect(self.db_path)
         cursor = conn.cursor()
         
         try:
-            # Mark old client as revoked
             cursor.execute('''
                 UPDATE clients 
                 SET revoked_at = CURRENT_TIMESTAMP 
                 WHERE client_id = ?
             ''', (old_client_id,))
             
-            # Create new client record
             cursor.execute('''
-                INSERT INTO clients (client_id, client_name, rsa_public_key, ecc_public_key)
-                VALUES (?, ?, ?, ?)
-            ''', (new_client_id, client_name, rsa_key, ecc_key))
+                INSERT INTO clients (client_id, client_name, rsa_public_key, ecc_public_key, dh_public_key)
+                VALUES (?, ?, ?, ?, ?)
+            ''', (new_client_id, client_name, rsa_key, ecc_key, dh_key))
             
-            # Remove old active session
             cursor.execute('''
                 DELETE FROM active_sessions WHERE client_id = ?
             ''', (old_client_id,))
@@ -218,12 +216,12 @@ db_manager = DatabaseManager()
 
 @app.post("/register")
 async def register_client(registration: ClientRegistration):
-    """Register a new client"""
     try:
         client_id = db_manager.register_client(
             registration.client_name,
             registration.rsa_public_key,
-            registration.ecc_public_key
+            registration.ecc_public_key,
+            registration.dh_public_key
         )
         
         return {
@@ -237,9 +235,7 @@ async def register_client(registration: ClientRegistration):
 
 @app.post("/regenerate_id")
 async def regenerate_client_id(regeneration: ClientIdRegeneration):
-    """Regenerate client ID - revoke old ID and issue new one"""
     try:
-        # Verify old client exists
         old_keys = db_manager.get_client_keys(regeneration.old_client_id)
         if not old_keys:
             raise HTTPException(status_code=404, detail="Old client ID not found")
@@ -247,21 +243,19 @@ async def regenerate_client_id(regeneration: ClientIdRegeneration):
         if DEBUG_MODE:
             logger.info(f"Regenerating ID for client: {regeneration.old_client_id}")
         
-        # Generate new client ID
         new_client_id = db_manager.regenerate_client_id(
             regeneration.old_client_id,
             regeneration.client_name,
             regeneration.rsa_public_key,
-            regeneration.ecc_public_key
+            regeneration.ecc_public_key,
+            regeneration.dh_public_key
         )
         
-        # Remove old client from active clients if connected
         if regeneration.old_client_id in active_clients:
             if DEBUG_MODE:
                 logger.info(f"Removing old client from active list: {regeneration.old_client_id}")
             del active_clients[regeneration.old_client_id]
         
-        # Close old WebSocket connection if exists
         if regeneration.old_client_id in websocket_connections:
             try:
                 await websocket_connections[regeneration.old_client_id].close()
@@ -286,20 +280,15 @@ async def regenerate_client_id(regeneration: ClientIdRegeneration):
 
 @app.post("/connect")
 async def connect_client(client_id: str, ip_address: str, port: int):
-    """Connect a client to the network"""
     try:
-        # Verify client exists
         keys = db_manager.get_client_keys(client_id)
         if not keys:
             raise HTTPException(status_code=404, detail="Client not found")
         
-        # Get client name
         client_name = db_manager.get_client_name(client_id)
         
-        # Create session
         db_manager.create_session(client_id, ip_address, port)
         
-        # Add to active clients
         active_clients[client_id] = ClientInfo(
             client_id=client_id,
             client_name=client_name or "Unknown",
@@ -307,6 +296,7 @@ async def connect_client(client_id: str, ip_address: str, port: int):
             port=port,
             rsa_public_key=keys[0],
             ecc_public_key=keys[1],
+            dh_public_key=keys[2],
             last_seen=datetime.now()
         )
         
@@ -351,7 +341,6 @@ async def disconnect_client(client_id: str):
 
 @app.get("/find_client/{client_id}")
 async def find_client(client_id: str):
-    """Find a client's connection information"""
     if client_id not in active_clients:
         raise HTTPException(status_code=404, detail="Client not found or offline")
     
@@ -365,7 +354,8 @@ async def find_client(client_id: str):
             "ip_address": client_info.ip_address,
             "port": client_info.port,
             "rsa_public_key": client_info.rsa_public_key,
-            "ecc_public_key": client_info.ecc_public_key
+            "ecc_public_key": client_info.ecc_public_key,
+            "dh_public_key": client_info.dh_public_key
         }
     }
 
@@ -538,6 +528,6 @@ if __name__ == "__main__":
         port=8000,
         reload=DEBUG_MODE,
         access_log=DEBUG_MODE,
-        ssl_keyfile=None,
-        ssl_certfile=None
+        #ssl_keyfile="/root/hid/key.pem",  # مسیر فایل کلید خصوصی SSL
+        #ssl_certfile="/root/hid/cert.pem"  # مسیر فایل گواهینامه SSL
     )

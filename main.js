@@ -13,22 +13,26 @@ const logError = console.error; // Always log errors
 const logInfo = DEBUG_MODE ? console.log : () => {};
 
 class SecureP2PClient {
-    constructor() {
-        this.window = null;
-        this.clientId = null;
-        this.username = null;
-        this.serverUrl = 'https://indust.aiframe.org';
-        this.websocket = null;
-        this.heartbeatInterval = null;
-        this.cryptoManager = new CryptoManager();
-        this.activeChats = new Map();
-        this.fileChunks = new Map();
-        this.messageBuffers = new Map();
-        this.chatActivities = new Map();
-        this.cleanupInterval = null;
-        this.INACTIVE_TIMEOUT = 10 * 60 * 1000;
-        this.CLEANUP_CHECK_INTERVAL = 2 * 60 * 1000;
-        this.isClosing = false;
+    constructor(serverUrl = 'https://indust.aiframe.org', cryptoManager, username) {
+        this.window = null;                        // پنجره UI (در صورت استفاده از Electron)
+        this.clientId = null;                      // شناسه کلاینت
+        this.username = username || null;          // نام کاربری
+        this.serverUrl = serverUrl;                // آدرس سرور
+        this.websocket = null;                     // اتصال WebSocket
+        this.heartbeatInterval = null;             // فاصله زمانی ضربان‌نگار
+        this.cryptoManager = cryptoManager || new CryptoManager(); // مدیر رمزنگاری
+        this.activeChats = new Map();              // نقشه چت‌های فعال
+        this.fileChunks = new Map();               // نقشه تکه‌های فایل
+        this.messageBuffers = new Map();           // بافر پیام‌ها
+        this.chatActivities = new Map();           // فعالیت‌های چت
+        this.cleanupInterval = null;               // فاصله زمانی تمیزکاری
+        this.reconnectAttempts = 0;                // تعداد تلاش‌های اتصال مجدد
+        this.isClosing = false;                    // وضعیت بسته شدن برنامه
+        this.INACTIVE_TIMEOUT = 10 * 60 * 1000;    // زمان انقضا برای غیرفعال بودن (10 دقیقه)
+        this.CLEANUP_CHECK_INTERVAL = 2 * 60 * 1000; // فاصله بررسی تمیزکاری (2 دقیقه)
+        this.p2pServer = null;                     // سرور P2P (اضافه شده برای سازگاری)
+        this.p2pPort = null;                       // پورت P2P
+        this.connections = new Map();              // نقشه اتصالات (اضافه شده برای سازگاری)
     }
 
     async initialize() {
@@ -89,7 +93,8 @@ class SecureP2PClient {
 
     async initializeCrypto() {
         await this.cryptoManager.generateKeys();
-        logInfo('Crypto keys generated successfully');
+        await this.cryptoManager.generateDHKeys(); // اضافه کردن تولید کلید DH
+        logInfo('Crypto keys and DH keys generated successfully');
     }
 
     // NEW: Start auto-cleanup timer
@@ -180,7 +185,8 @@ class SecureP2PClient {
                 const response = await axios.post(`${this.serverUrl}/register`, {
                     client_name: clientName,
                     rsa_public_key: keys.rsa,
-                    ecc_public_key: keys.ecc
+                    ecc_public_key: keys.ecc,
+                    dh_public_key: keys.dh // اضافه کردن کلید عمومی DH
                 });
         
                 if (response.data.success) {
@@ -197,6 +203,9 @@ class SecureP2PClient {
                 return { success: false, error: 'Registration failed' };
             } catch (error) {
                 logError('Registration error:', error);
+                if (error.response) {
+                    logError('Server response:', error.response.data);
+                }
                 return { success: false, error: error.message };
             }
         });
@@ -207,7 +216,7 @@ class SecureP2PClient {
                 if (!this.clientId) {
                     return { success: false, error: 'No active client ID to regenerate' };
                 }
-
+        
                 logInfo(`Regenerating client ID for: ${this.clientId}`);
                 
                 const clientName = this.username || 'RegeneratedUser';
@@ -217,9 +226,10 @@ class SecureP2PClient {
                     old_client_id: this.clientId,
                     client_name: clientName,
                     rsa_public_key: keys.rsa,
-                    ecc_public_key: keys.ecc
+                    ecc_public_key: keys.ecc,
+                    dh_public_key: keys.dh // اضافه کردن کلید عمومی DH
                 });
-
+        
                 if (response.data.success) {
                     const oldClientId = this.clientId;
                     this.clientId = response.data.new_client_id;
@@ -242,6 +252,9 @@ class SecureP2PClient {
                 return { success: false, error: 'ID regeneration failed' };
             } catch (error) {
                 logError('ID Regeneration error:', error);
+                if (error.response) {
+                    logError('Server response:', error.response.data);
+                }
                 return { success: false, error: error.message };
             }
         });
@@ -392,7 +405,7 @@ class SecureP2PClient {
             logInfo('No active chats to send PD messages to');
             return;
         }
-
+    
         logInfo(`Sending PD to ${this.activeChats.size} active chats before exit`);
         
         const pdPromises = [];
@@ -422,20 +435,30 @@ class SecureP2PClient {
         // Shorter delay for exit
         await new Promise(resolve => setTimeout(resolve, 200));
     }
+    
     async sendPDMessage(recipientId) {
         try {
             // Get recipient's public keys
             const recipientInfo = await axios.get(`${this.serverUrl}/find_client/${recipientId}`);
-            if (!recipientInfo.data.success) {
+            if (!recipientInfo.data.success || !recipientInfo.data.client_info) {
                 logInfo(`Recipient ${recipientId} not found for PD message - proceeding with local cleanup`);
                 return { success: true, message: 'Recipient offline, local cleanup only' };
+            }
+    
+            const { rsa_public_key, ecc_public_key, dh_public_key } = recipientInfo.data.client_info;
+    
+            // بررسی وجود کلید عمومی DH
+            if (!dh_public_key) {
+                logInfo(`No DH public key found for recipient ${recipientId} - proceeding with local cleanup`);
+                return { success: true, message: 'No DH public key, local cleanup only' };
             }
     
             // Encrypt and send PD message
             const encryptedMessage = await this.cryptoManager.tripleEncrypt(
                 'PD',
-                recipientInfo.data.client_info.rsa_public_key,
-                recipientInfo.data.client_info.ecc_public_key
+                rsa_public_key,
+                ecc_public_key,
+                dh_public_key
             );
     
             if (this.websocket && this.websocket.readyState === WebSocket.OPEN) {
@@ -492,10 +515,10 @@ class SecureP2PClient {
             const chunkSize = 512 * 1024; // 512KB chunks
             const totalChunks = Math.ceil(fileData.length / chunkSize);
             const fileId = crypto.randomUUID();
-    
+        
             log(`Sending large file in ${totalChunks} chunks`);
             this.updateChatActivity(recipientInfo.client_id);
-    
+        
             // Send file header first
             const headerMessage = {
                 type: 'file_header',
@@ -506,13 +529,14 @@ class SecureP2PClient {
                 totalChunks: totalChunks,
                 timestamp: parsedFile.timestamp
             };
-    
+        
             const encryptedHeader = await this.cryptoManager.tripleEncrypt(
                 JSON.stringify(headerMessage),
                 recipientInfo.rsa_public_key,
-                recipientInfo.ecc_public_key
+                recipientInfo.ecc_public_key,
+                recipientInfo.dh_public_key // کلید عمومی DH در فرمت hex
             );
-    
+        
             if (this.websocket && this.websocket.readyState === WebSocket.OPEN) {
                 this.websocket.send(JSON.stringify({
                     type: 'message',
@@ -524,13 +548,13 @@ class SecureP2PClient {
             } else {
                 throw new Error('WebSocket not connected');
             }
-    
+        
             // Send chunks with delay
             for (let i = 0; i < totalChunks; i++) {
                 const start = i * chunkSize;
                 const end = Math.min(start + chunkSize, fileData.length);
                 const chunk = fileData.slice(start, end);
-    
+        
                 const chunkMessage = {
                     type: 'file_chunk',
                     fileId: fileId,
@@ -538,13 +562,14 @@ class SecureP2PClient {
                     chunkData: chunk,
                     isLastChunk: i === totalChunks - 1
                 };
-    
+        
                 const encryptedChunk = await this.cryptoManager.tripleEncrypt(
                     JSON.stringify(chunkMessage),
                     recipientInfo.rsa_public_key,
-                    recipientInfo.ecc_public_key
+                    recipientInfo.ecc_public_key,
+                    recipientInfo.dh_public_key // کلید عمومی DH در فرمت hex
                 );
-    
+        
                 if (this.websocket && this.websocket.readyState === WebSocket.OPEN) {
                     this.websocket.send(JSON.stringify({
                         type: 'message',
@@ -556,16 +581,16 @@ class SecureP2PClient {
                 } else {
                     throw new Error('WebSocket not connected');
                 }
-    
+        
                 if (i < totalChunks - 1) {
                     await new Promise(resolve => setTimeout(resolve, 50));
                 }
-    
+        
                 this.window.webContents.send('file-send-progress', {
                     progress: ((i + 1) / totalChunks) * 100
                 });
             }
-    
+        
             this.storeMessage(recipientInfo.client_id, fileMessage, 'sent');
             log(`Large file sent successfully: ${parsedFile.fileName}`);
             return { success: true };
@@ -577,15 +602,15 @@ class SecureP2PClient {
 
     async sendRegularMessage(message, recipientInfo) {
         try {
-            // Update activity
             this.updateChatActivity(recipientInfo.client_id);
-    
+        
             const encryptedMessage = await this.cryptoManager.tripleEncrypt(
                 message,
                 recipientInfo.rsa_public_key,
-                recipientInfo.ecc_public_key
+                recipientInfo.ecc_public_key,
+                recipientInfo.dh_public_key // کلید عمومی DH در فرمت hex
             );
-    
+        
             if (this.websocket && this.websocket.readyState === WebSocket.OPEN) {
                 this.websocket.send(JSON.stringify({
                     type: 'message',
@@ -597,12 +622,48 @@ class SecureP2PClient {
             } else {
                 throw new Error('WebSocket not connected');
             }
-    
+        
             this.storeMessage(recipientInfo.client_id, message, 'sent');
+            logInfo(`Regular message sent to ${recipientInfo.client_id}`);
             return { success: true };
         } catch (error) {
             logError('Send regular message error:', error);
             throw error;
+        }
+    }
+
+    startCleanupInterval() {
+        if (this.cleanupInterval) {
+            clearInterval(this.cleanupInterval);
+        }
+        this.cleanupInterval = setInterval(() => {
+            const now = Date.now();
+            for (const [chatId, lastActivity] of this.chatActivities) {
+                if (now - lastActivity > this.INACTIVE_TIMEOUT) {
+                    logInfo(`Cleaning up inactive chat: ${chatId.substring(0, 8)}...`);
+                    this.activeChats.delete(chatId);
+                    this.fileChunks.delete(chatId);
+                    this.messageBuffers.delete(chatId);
+                    this.chatActivities.delete(chatId);
+                }
+            }
+        }, this.CLEANUP_CHECK_INTERVAL); // بررسی هر 2 دقیقه
+        logInfo('Cleanup interval started');
+    }
+
+    stopCleanupInterval() {
+        if (this.cleanupInterval) {
+            clearInterval(this.cleanupInterval);
+            this.cleanupInterval = null;
+            logInfo('Cleanup interval stopped');
+        }
+    }
+
+    stopHeartbeat() {
+        if (this.heartbeatInterval) {
+            clearInterval(this.heartbeatInterval);
+            this.heartbeatInterval = null;
+            logInfo('Heartbeat stopped');
         }
     }
 
@@ -612,123 +673,92 @@ class SecureP2PClient {
                 logError('Cannot connect to server: clientId is null');
                 return;
             }
-    
             const localIP = await this.getLocalIP();
+            logInfo(`Local IP detected: ${localIP}`);
             const response = await axios.post(`${this.serverUrl}/connect`, null, {
-                params: {
-                    client_id: this.clientId,
-                    ip_address: localIP,
-                    port: 0
-                }
+                params: { client_id: this.clientId, ip_address: localIP, port: 0 }
             });
-    
             if (response.data.success) {
                 logInfo('Successfully connected to server');
-                
-                const wsUrl = this.serverUrl.replace('https://', 'wss://') + `/ws/${this.clientId}`;
+                const wsUrl = this.serverUrl.replace('http://', 'wss://').replace('https://', 'wss://') + `/ws/${this.clientId}`;
                 logInfo(`Attempting WebSocket connection to: ${wsUrl}`);
-                
                 this.websocket = new WebSocket(wsUrl);
-                
                 this.websocket.on('open', () => {
                     logInfo('WebSocket connected successfully');
-                    this.websocket.send(JSON.stringify({
-                        type: 'register',
-                        client_id: this.clientId
-                    }));
+                    this.websocket.send(JSON.stringify({ type: 'register', client_id: this.clientId }));
                     this.startHeartbeat();
+                    this.startCleanupInterval(); // این خط اکنون کار می‌کند
                 });
-    
-                this.websocket.on('message', (data) => {
+                this.websocket.on('message', async (data) => {
                     try {
-                        const message = JSON.parse(data);
-                        this.handleWebSocketMessage(message);
+                        const message = JSON.parse(data.toString());
+                        await this.handleWebSocketMessage(message);
                     } catch (error) {
                         logError('WebSocket message parse error:', error);
                     }
                 });
-    
                 this.websocket.on('close', () => {
                     logInfo('WebSocket disconnected, reconnecting...');
-                    setTimeout(() => this.reconnectWebSocket(), 5000);
+                    this.stopHeartbeat();
+                    this.stopCleanupInterval();
+                    if (!this.isClosing) {
+                        setTimeout(() => this.reconnectWebSocket(), 5000);
+                    }
                 });
-    
                 this.websocket.on('error', (error) => {
                     logError('WebSocket error:', error);
+                    this.stopHeartbeat();
+                    this.stopCleanupInterval();
+                    if (this.websocket) this.websocket.close();
                 });
+            } else {
+                throw new Error('Server connection failed: ' + (response.data.message || 'Unknown error'));
             }
         } catch (error) {
             logError('Connect to server error:', error);
+            if (this.reconnectAttempts < 3 && !this.isClosing) {
+                this.reconnectAttempts++;
+                logInfo(`Reconnect attempt ${this.reconnectAttempts}...`);
+                setTimeout(() => this.connectToServer(), 5000 * this.reconnectAttempts);
+            } else {
+                logError('Max reconnect attempts reached or client is closing');
+            }
         }
     }
 
     async disconnectFromServer(clientId = null) {
         try {
             const targetClientId = clientId || this.clientId;
-            
-            if (!targetClientId) {
-                return { success: true };
-            }
-
-            log(`Disconnecting client: ${targetClientId}`);
-
-            // Stop cleanup timer
-            if (this.cleanupInterval) {
-                clearInterval(this.cleanupInterval);
-                this.cleanupInterval = null;
-            }
-
-            if (this.heartbeatInterval) {
-                clearInterval(this.heartbeatInterval);
-                this.heartbeatInterval = null;
-            }
-
+            if (!targetClientId) return { success: true };
+            logInfo(`Disconnecting client: ${targetClientId}`);
+            this.isClosing = true;
+            this.stopHeartbeat();
+            this.stopCleanupInterval();
             if (this.websocket) {
-                try {
-                    if (this.websocket.readyState === WebSocket.OPEN) {
-                        this.websocket.close();
-                    }
-                } catch (error) {
-                    logError('Error closing WebSocket:', error);
-                }
+                try { if (this.websocket.readyState === WebSocket.OPEN) this.websocket.close(); }
+                catch (error) { logError('Error closing WebSocket:', error); }
                 this.websocket = null;
             }
-
             if (this.p2pServer) {
-                try {
-                    this.p2pServer.close();
-                } catch (error) {
-                    logError('Error closing P2P server:', error);
-                }
-                this.p2pServer = null;
-                this.p2pPort = null;
+                try { this.p2pServer.close(); }
+                catch (error) { logError('Error closing P2P server:', error); }
+                this.p2pServer = null; this.p2pPort = null;
             }
-
             try {
                 const response = await axios.post(`${this.serverUrl}/disconnect`, null, {
-                    params: {
-                        client_id: targetClientId
-                    },
-                    timeout: 5000
+                    params: { client_id: targetClientId }, timeout: 5000
                 });
-                
-                log('Server disconnect response received');
-            } catch (error) {
-                logError('Error notifying server about disconnect:', error);
-            }
-
-            this.connections.clear();
-            this.messageBuffers.clear();
-            this.chatActivities.clear(); // Clear activity tracking
+                logInfo('Server disconnect response received');
+            } catch (error) { logError('Error notifying server about disconnect:', error); }
+            this.connections.clear(); this.messageBuffers.clear(); this.chatActivities.clear();
+            this.isClosing = false;
             return { success: true };
-
         } catch (error) {
             logError('Disconnect error:', error);
+            this.isClosing = false;
             return { success: false, error: error.message };
         }
     }
-
-
 
     // NEW: Handle received PD message
     handlePDReceived(senderId) {
@@ -907,58 +937,57 @@ class SecureP2PClient {
 
     async reconnectWebSocket() {
         if (!this.clientId) return;
-    
         try {
             logInfo('Attempting to reconnect WebSocket...');
-            const wsUrl = this.serverUrl.replace('https://', 'wss://') + `/ws/${this.clientId}`;
-    
+            const wsUrl = this.serverUrl.replace('http://', 'wss://').replace('https://', 'wss://') + `/ws/${this.clientId}`;
             this.websocket = new WebSocket(wsUrl);
-    
             this.websocket.on('open', () => {
                 logInfo('WebSocket reconnected successfully');
-                this.websocket.send(JSON.stringify({
-                    type: 'register',
-                    client_id: this.clientId
-                }));
+                this.websocket.send(JSON.stringify({ type: 'register', client_id: this.clientId }));
                 this.startHeartbeat();
             });
-    
-            this.websocket.on('message', (data) => {
+            this.websocket.on('message', async (data) => {
                 try {
-                    const message = JSON.parse(data);
-                    this.handleWebSocketMessage(message);
+                    const message = JSON.parse(data.toString());
+                    await this.handleWebSocketMessage(message);
                 } catch (error) {
                     logError('WebSocket message parse error:', error);
                 }
             });
-    
             this.websocket.on('close', () => {
                 logInfo('WebSocket disconnected, scheduling reconnect...');
-                setTimeout(() => this.reconnectWebSocket(), 5000);
+                this.stopHeartbeat();
+                if (!this.isClosing) setTimeout(() => this.reconnectWebSocket(), 5000);
             });
-    
             this.websocket.on('error', (error) => {
                 logError('WebSocket reconnection error:', error);
+                this.stopHeartbeat();
+                if (this.websocket) this.websocket.close();
             });
         } catch (error) {
             logError('WebSocket reconnection failed:', error);
-            setTimeout(() => this.reconnectWebSocket(), 5000);
+            if (!this.isClosing) setTimeout(() => this.reconnectWebSocket(), 5000);
         }
     }
+
 
     startHeartbeat() {
         if (this.heartbeatInterval) {
             clearInterval(this.heartbeatInterval);
         }
-        
+    
         this.heartbeatInterval = setInterval(() => {
             if (this.websocket && this.websocket.readyState === WebSocket.OPEN) {
                 this.websocket.send(JSON.stringify({
                     type: 'heartbeat',
                     timestamp: Date.now()
                 }));
+                logInfo('Heartbeat sent');
+            } else {
+                logInfo('WebSocket not open, stopping heartbeat');
+                this.stopHeartbeat();
             }
-        }, 30000); // Every 30 seconds
+        }, 30000); // ارسال heartbeat هر 30 ثانیه
     }
 
     async getLocalIP() {
@@ -1025,74 +1054,144 @@ class CryptoManager {
         }
     }
 
-    async getPublicKeys() {
-        return {
-            rsa: this.rsaKeyPair.publicKey,
-            ecc: this.eccKeyPair.publicKey
-        };
+    async generateDHKeys() {
+        try {
+            const dh = crypto.createDiffieHellmanGroup('modp14'); // گروه 2048 بیتی RFC 7919
+            dh.generateKeys(); // تولید کلیدهای خصوصی و عمومی
+            this.dhKeyPair = {
+                dhInstance: dh, // ذخیره نمونه کامل DH
+                publicKey: dh.getPublicKey('hex') // ذخیره کلید عمومی برای ارسال
+            };
+            logInfo('Generated DH public key length:', this.dhKeyPair.publicKey.length);
+            logInfo('Generated DH public key:', this.dhKeyPair.publicKey);
+            logInfo('Diffie-Hellman keys generated successfully using RFC 7919 modp14 group');
+        } catch (error) {
+            logError('Error generating DH keys:', error);
+            throw error;
+        }
+    }
+    
+    async computeSharedSecret(recipientDHPublicKey) {
+        try {
+            // بررسی وجود کلید عمومی گیرنده
+            if (!recipientDHPublicKey) {
+                throw new Error('Recipient DH public key is undefined');
+            }
+    
+            // استفاده از نمونه DH ذخیره‌شده
+            const dh = this.dhKeyPair.dhInstance;
+            logInfo('Recipient DH Public Key:', recipientDHPublicKey);
+            logInfo('Recipient DH Public Key Length:', recipientDHPublicKey.length);
+            const sharedSecret = dh.computeSecret(Buffer.from(recipientDHPublicKey, 'hex'), 'hex', 'hex');
+            logInfo('Computed Shared Secret Length:', sharedSecret.length);
+            logInfo('Computed Shared Secret:', sharedSecret);
+    
+            // اطمینان از طول مناسب کلید جلسه‌ای با استفاده از HKDF
+            const hkdf = crypto.createHmac('sha256', 'session_key_salt');
+            hkdf.update(Buffer.from(sharedSecret, 'hex'));
+            const sessionKey = hkdf.digest().slice(0, 32); // 32 بایت (256 بیت) برای AES-256
+            
+            logInfo('Session Key Length:', sessionKey.length);
+            logInfo('Computed DH shared secret successfully');
+            return sessionKey; // بازگرداندن بافر 32 بایت
+        } catch (error) {
+            logError('Error computing DH shared secret:', error);
+            throw error;
+        }
     }
 
-    async tripleEncrypt(message, recipientRSAKey, recipientECCKey) {
+    async getPublicKeys() {
         try {
-            // Optimized for large messages
+            return {
+                rsa: this.rsaKeyPair.publicKey,
+                ecc: this.eccKeyPair.publicKey,
+                dh: this.dhKeyPair.publicKey // کلید DH در فرمت hex
+            };
+        } catch (error) {
+            logError('Error getting public keys:', error);
+            throw error;
+        }
+    }
+
+    async tripleEncrypt(message, recipientRSAKey, recipientECCKey, recipientDHPublicKey) {
+        try {
             const messageSize = Buffer.byteLength(message, 'utf8');
-            if (messageSize > 1024 * 1024) { // > 1MB
+            if (messageSize > 1024 * 1024) {
                 log(`Encrypting large message: ${messageSize} bytes`);
             }
             
-            // Step 1: Generate AES session key and IV
-            const aesKey = crypto.randomBytes(32);
+            // محاسبه کلید جلسه‌ای با Diffie-Hellman
+            const sessionKey = await this.computeSharedSecret(recipientDHPublicKey); // دریافت بافر 32 بایت
+            const aesKey = sessionKey; // استفاده مستقیم از بافر 32 بایت
             const iv = crypto.randomBytes(16);
-
-            // Step 2: Encrypt message with AES-256-GCM
+    
+            // رمزنگاری پیام با AES-256-GCM
             const aesCipher = crypto.createCipheriv('aes-256-gcm', aesKey, iv);
             let aesEncrypted = aesCipher.update(message, 'utf8', 'hex');
             aesEncrypted += aesCipher.final('hex');
             const aesTag = aesCipher.getAuthTag();
-
-            // Step 3: Encrypt AES key with RSA
+    
+            // رمزنگاری کلید جلسه‌ای با RSA
             const rsaEncryptedKey = crypto.publicEncrypt({
                 key: recipientRSAKey,
                 padding: crypto.constants.RSA_PKCS1_OAEP_PADDING,
                 oaepHash: 'sha256'
-            }, aesKey);
-
-            // Step 4: Sign with ECC
+            }, sessionKey); // رمزنگاری بافر کلید
+    
+            // امضا با ECC
             const sign = crypto.createSign('SHA256');
             sign.update(aesEncrypted);
             const signature = sign.sign(this.eccKeyPair.privateKey, 'hex');
-
+    
             const result = {
                 aesEncrypted,
                 aesTag: aesTag.toString('hex'),
                 rsaEncryptedKey: rsaEncryptedKey.toString('hex'),
                 signature,
-                iv: iv.toString('hex')
+                iv: iv.toString('hex'),
+                dhPublicKey: this.dhKeyPair.publicKey // کلید عمومی DH از ساختار جدید
             };
             
+            logInfo('Triple encryption completed successfully');
             return result;
         } catch (error) {
             logError('Triple encryption error:', error);
             throw error;
         }
     }
-
+    
     async tripleDecrypt(encryptedData) {
         try {
-            // Step 1: Decrypt AES key with RSA
-            const aesKey = crypto.privateDecrypt({
+            // محاسبه کلید جلسه‌ای با کلید عمومی DH فرستنده
+            logInfo('Received DH Public Key:', encryptedData.dhPublicKey);
+            logInfo('Received DH Public Key Length:', encryptedData.dhPublicKey.length);
+            const sessionKey = await this.computeSharedSecret(encryptedData.dhPublicKey);
+            logInfo('Decrypted Session Key Length:', sessionKey.length);
+            logInfo('Decrypted Session Key:', sessionKey.toString('hex'));
+    
+            // رمزگشایی کلید جلسه‌ای با RSA (برای تأیید)
+            const decryptedSessionKey = crypto.privateDecrypt({
                 key: this.rsaKeyPair.privateKey,
                 padding: crypto.constants.RSA_PKCS1_OAEP_PADDING,
                 oaepHash: 'sha256'
             }, Buffer.from(encryptedData.rsaEncryptedKey, 'hex'));
-
-            // Step 2: Decrypt message with AES-256-GCM
-            const aesDecipher = crypto.createDecipheriv('aes-256-gcm', aesKey, Buffer.from(encryptedData.iv, 'hex'));
+            logInfo('Decrypted RSA Session Key Length:', decryptedSessionKey.length);
+            logInfo('Decrypted RSA Session Key:', decryptedSessionKey.toString('hex'));
+    
+            // تأیید اینکه کلید جلسه‌ای معتبر است
+            if (sessionKey.toString('hex') !== decryptedSessionKey.toString('hex')) {
+                logError('Session key mismatch - computed:', sessionKey.toString('hex'), 'decrypted:', decryptedSessionKey.toString('hex'));
+                throw new Error('Session key verification failed');
+            }
+    
+            // رمزگشایی پیام با AES-256-GCM
+            const aesDecipher = crypto.createDecipheriv('aes-256-gcm', sessionKey, Buffer.from(encryptedData.iv, 'hex'));
             aesDecipher.setAuthTag(Buffer.from(encryptedData.aesTag, 'hex'));
             
             let decrypted = aesDecipher.update(encryptedData.aesEncrypted, 'hex', 'utf8');
             decrypted += aesDecipher.final('utf8');
-
+    
+            logInfo('Triple decryption completed successfully');
             return decrypted;
         } catch (error) {
             logError('Triple decryption error:', error);
