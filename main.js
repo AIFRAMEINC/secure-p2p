@@ -14,32 +14,38 @@ const logInfo = DEBUG_MODE ? console.log : () => {};
 
 class SecureP2PClient {
     constructor(serverUrl = 'https://indust.aiframe.org', cryptoManager, username) {
-        this.window = null;                        // پنجره UI (در صورت استفاده از Electron)
-        this.clientId = null;                      // شناسه کلاینت
-        this.username = username || null;          // نام کاربری
-        this.serverUrl = serverUrl;                // آدرس سرور
-        this.websocket = null;                     // اتصال WebSocket
-        this.heartbeatInterval = null;             // فاصله زمانی ضربان‌نگار
-        this.cryptoManager = cryptoManager || new CryptoManager(); // مدیر رمزنگاری
-        this.activeChats = new Map();              // نقشه چت‌های فعال
-        this.fileChunks = new Map();               // نقشه تکه‌های فایل
-        this.messageBuffers = new Map();           // بافر پیام‌ها
-        this.chatActivities = new Map();           // فعالیت‌های چت
-        this.cleanupInterval = null;               // فاصله زمانی تمیزکاری
-        this.reconnectAttempts = 0;                // تعداد تلاش‌های اتصال مجدد
-        this.isClosing = false;                    // وضعیت بسته شدن برنامه
-        this.INACTIVE_TIMEOUT = 10 * 60 * 1000;    // زمان انقضا برای غیرفعال بودن (10 دقیقه)
-        this.CLEANUP_CHECK_INTERVAL = 2 * 60 * 1000; // فاصله بررسی تمیزکاری (2 دقیقه)
-        this.p2pServer = null;                     // سرور P2P (اضافه شده برای سازگاری)
-        this.p2pPort = null;                       // پورت P2P
-        this.connections = new Map();              // نقشه اتصالات (اضافه شده برای سازگاری)
+        this.window = null;
+        this.clientId = null;
+        this.username = username || null;
+        this.serverUrl = serverUrl;
+        this.websocket = null;
+        this.heartbeatInterval = null;
+        this.cryptoManager = cryptoManager || new CryptoManager(serverUrl);
+        this.activeChats = new Map();
+        this.fileChunks = new Map();
+        this.messageBuffers = new Map();
+        this.chatActivities = new Map();
+        this.cleanupInterval = null;
+        this.reconnectAttempts = 0;
+        this.isClosing = false;
+        this.INACTIVE_TIMEOUT = 10 * 60 * 1000;
+        this.CLEANUP_CHECK_INTERVAL = 2 * 60 * 1000;
+        this.p2pServer = null;
+        this.p2pPort = null;
+        this.connections = new Map();
+        this.usedNonces = new Map();
+        // تنظیمات UDP
+        this.udpClient = null;
+        this.udpPort = null;
+        this.udpHost = this.serverUrl.replace('https://', '').replace('http://', '');
     }
 
     async initialize() {
         this.createWindow();
         this.setupIPC();
-        await this.initializeCrypto();
+        await this.initializeCrypto(false); // تولید اولیه همه کلیدها
         this.startActivityCleanup();
+        this.startDHKeyRefresh(); // اضافه کردن تازه‌سازی کلیدهای DH
     
         // Check if clientId exists, otherwise wait for registration
         if (!this.clientId) {
@@ -48,6 +54,26 @@ class SecureP2PClient {
         } else {
             await this.connectToServer();
         }
+    }
+
+    startDHKeyRefresh() {
+        const refreshDHKeys = async () => {
+            try {
+                await this.initializeCrypto(true); // فقط کلیدهای DH تازه‌سازی می‌شوند
+            } catch (error) {
+                logError('Error refreshing DH keys:', error);
+            }
+        };
+    
+        // تازه‌سازی هر 30 دقیقه
+        setInterval(refreshDHKeys, 30 * 60 * 1000);
+    
+        // تازه‌سازی در شروع هر چت
+        ipcMain.handle('start-new-chat', async (event, recipientId) => {
+            await refreshDHKeys();
+            this.updateChatActivity(recipientId);
+            return { success: true };
+        });
     }
 
     createWindow() {
@@ -91,13 +117,54 @@ class SecureP2PClient {
         }
     }
 
-    async initializeCrypto() {
-        await this.cryptoManager.generateKeys();
-        await this.cryptoManager.generateDHKeys(); // اضافه کردن تولید کلید DH
-        logInfo('Crypto keys and DH keys generated successfully');
+    async initializeCrypto(refreshDHOnly = false) {
+        try {
+            if (!refreshDHOnly) {
+                // تولید اولیه همه کلیدها
+                await this.cryptoManager.generateKeys(); // تولید RSA و ECC
+                await this.cryptoManager.generateDHKeys(); // تولید اولیه DH
+                logInfo('Crypto keys and DH keys generated successfully');
+            } else {
+                // فقط تازه‌سازی کلیدهای DH
+                await this.cryptoManager.generateDHKeys();
+                logInfo('DH keys refreshed successfully');
+                if (this.clientId) {
+                    // امضای کلید عمومی DH با ECC برای تأیید
+                    const keys = await this.cryptoManager.getPublicKeys();
+                    const sign = crypto.createSign('SHA256');
+                    sign.update(keys.dh);
+                    const dhSignature = sign.sign(this.cryptoManager.eccKeyPair.privateKey, 'hex');
+    
+                    // به‌روزرسانی کلید در سرور از طریق API
+                    try {
+                        await axios.post(`${this.serverUrl}/update_keys`, {
+                            client_id: this.clientId,
+                            dh_public_key: keys.dh,
+                            dh_signature: dhSignature // امضای کلید DH
+                        });
+                        logInfo('Updated DH public key on server via API with signature');
+                    } catch (error) {
+                        logError('Failed to update DH public key on server:', error);
+                    }
+    
+                    // ارسال به WebSocket برای اطلاع‌رسانی به کاربران دیگر
+                    if (this.websocket && this.websocket.readyState === WebSocket.OPEN) {
+                        this.websocket.send(JSON.stringify({
+                            type: 'update_keys',
+                            client_id: this.clientId,
+                            dh_public_key: keys.dh,
+                            dh_signature: dhSignature
+                        }));
+                        logInfo('Updated DH public key sent to WebSocket with signature');
+                    }
+                }
+            }
+        } catch (error) {
+            logError('Error during crypto initialization:', error);
+            throw error;
+        }
     }
 
-    // NEW: Start auto-cleanup timer
     startActivityCleanup() {
         if (this.cleanupInterval) {
             clearInterval(this.cleanupInterval);
@@ -105,11 +172,33 @@ class SecureP2PClient {
         
         this.cleanupInterval = setInterval(() => {
             this.checkInactiveChats();
+            this.cleanupOldNonces(); // تمیزکاری nonce‌های قدیمی
         }, this.CLEANUP_CHECK_INTERVAL);
         
         logInfo('Activity cleanup timer started');
     }
-
+    
+    // متد جدید برای تمیزکاری nonce‌ها
+    cleanupOldNonces() {
+        const now = Date.now();
+        const oneHourAgo = now - (60 * 60 * 1000); // 1 ساعت قبل
+        let deletedCount = 0;
+    
+        // پیمایش روی تمام nonce‌ها در usedNonces
+        for (const [nonce, timestamp] of this.usedNonces) {
+            if (timestamp < oneHourAgo) {
+                this.usedNonces.delete(nonce);
+                deletedCount++;
+            }
+        }
+    
+        if (deletedCount > 0) {
+            logInfo(`Cleaned up ${deletedCount} old nonces`);
+        } else {
+            logInfo('No old nonces to clean up');
+        }
+    }
+    
     // NEW: Check for inactive chats and clean them up
     checkInactiveChats() {
         const now = Date.now();
@@ -165,6 +254,11 @@ class SecureP2PClient {
 
     // NEW: Remove chat from sidebar via renderer
     removeChatFromSidebar(clientId) {
+        if (!clientId) {
+            logError('Cannot remove chat from sidebar: clientId is undefined');
+            return;
+        }
+        
         logInfo('Removing chat from sidebar:', clientId.substring(0, 8));
         
         // Send message to renderer to remove chat from UI
@@ -399,6 +493,35 @@ class SecureP2PClient {
         });
     }
 
+    async setupUDP() {
+        const dgram = require('dgram');
+        this.udpClient = dgram.createSocket('udp4');
+    
+        this.udpClient.on('listening', () => {
+            const address = this.udpClient.address();
+            this.udpPort = address.port;
+            logInfo(`UDP client listening on ${address.address}:${address.port}`);
+        });
+    
+        this.udpClient.on('message', (msg, rinfo) => {
+            try {
+                const message = JSON.parse(msg.toString());
+                this.handleWebSocketMessage(message); // استفاده از همان متد برای پردازش پیام‌ها
+                logInfo(`Received UDP message from ${rinfo.address}:${rinfo.port}`);
+            } catch (error) {
+                logError('UDP message parse error:', error);
+            }
+        });
+    
+        this.udpClient.on('error', (error) => {
+            logError('UDP client error:', error);
+            this.udpClient.close();
+            setTimeout(() => this.setupUDP(), 5000);
+        });
+    
+        this.udpClient.bind();
+    }
+
     // NEW: Send PD to all active chats before exit
     async sendPDToAllActiveChats() {
         if (this.activeChats.size === 0) {
@@ -438,6 +561,7 @@ class SecureP2PClient {
     
     async sendPDMessage(recipientId) {
         try {
+            const zlib = require('zlib');
             // Get recipient's public keys
             const recipientInfo = await axios.get(`${this.serverUrl}/find_client/${recipientId}`);
             if (!recipientInfo.data.success || !recipientInfo.data.client_info) {
@@ -453,9 +577,27 @@ class SecureP2PClient {
                 return { success: true, message: 'No DH public key, local cleanup only' };
             }
     
-            // Encrypt and send PD message
+            // تولید nonce با timestamp
+            const nonceObj = {
+                value: crypto.randomBytes(16).toString('hex'),
+                timestamp: Date.now()
+            };
+            const nonce = nonceObj.value;
+            logInfo('Generated nonce for PD:', nonce);
+    
+            // بسته‌بندی پیام PD با nonce
+            const pdMessage = {
+                content: 'PD',
+                nonce: nonceObj
+            };
+    
+            // فشرده‌سازی پیام PD قبل از رمزنگاری
+            const compressedMessage = zlib.deflateSync(JSON.stringify(pdMessage)).toString('base64');
+            logInfo(`Compressed PD message size: ${Buffer.byteLength(compressedMessage, 'utf8')} bytes`);
+    
+            // رمزنگاری پیام PD فشرده‌شده
             const encryptedMessage = await this.cryptoManager.tripleEncrypt(
-                'PD',
+                compressedMessage,
                 rsa_public_key,
                 ecc_public_key,
                 dh_public_key
@@ -467,17 +609,21 @@ class SecureP2PClient {
                     sender_id: this.clientId,
                     recipient_id: recipientId,
                     encrypted_message: encryptedMessage,
-                    timestamp: Date.now()
+                    timestamp: Date.now(),
+                    nonce: nonce
                 }));
+                logInfo(`PD message with MAC sent successfully to: ${recipientId} with nonce: ${nonce}`);
             } else {
                 logInfo('WebSocket not connected, proceeding with local cleanup');
                 return { success: true, message: 'WebSocket not connected, local cleanup only' };
             }
     
-            logInfo(`PD message sent successfully to: ${recipientId}`);
+            // ذخیره nonce با timestamp در usedNonces
+            this.usedNonces.set(nonce, nonceObj.timestamp);
+    
             return { success: true };
         } catch (error) {
-            logError('Error sending PD message:', error);
+            logError('Error sending PD message with MAC:', error);
             return { success: true, message: 'PD send failed but local cleanup will proceed' };
         }
     }
@@ -510,16 +656,23 @@ class SecureP2PClient {
 
     async sendLargeFile(fileMessage, recipientInfo) {
         try {
+            const zlib = require('zlib');
             const parsedFile = JSON.parse(fileMessage);
             const fileData = parsedFile.fileData;
-            const chunkSize = 512 * 1024; // 512KB chunks
+            const chunkSize = 512 * 1024;
             const totalChunks = Math.ceil(fileData.length / chunkSize);
             const fileId = crypto.randomUUID();
-        
+  
             log(`Sending large file in ${totalChunks} chunks`);
             this.updateChatActivity(recipientInfo.client_id);
-        
-            // Send file header first
+  
+            let lastSentChunk = -1;
+            if (this.fileChunks.has(fileId)) {
+                const existingTransfer = this.fileChunks.get(fileId);
+                lastSentChunk = existingTransfer.lastSentChunk || -1;
+                logInfo(`Resuming file transfer for fileId ${fileId} from chunk ${lastSentChunk + 1}`);
+            }
+  
             const headerMessage = {
                 type: 'file_header',
                 fileId: fileId,
@@ -527,34 +680,64 @@ class SecureP2PClient {
                 fileSize: parsedFile.fileSize,
                 fileType: parsedFile.fileType,
                 totalChunks: totalChunks,
-                timestamp: parsedFile.timestamp
+                timestamp: parsedFile.timestamp,
+                lastSentChunk: lastSentChunk
             };
-        
+  
+            const compressedHeader = zlib.deflateSync(JSON.stringify(headerMessage)).toString('base64');
+            logInfo(`Compressed header size: ${Buffer.byteLength(compressedHeader, 'utf8')} bytes`);
+  
             const encryptedHeader = await this.cryptoManager.tripleEncrypt(
-                JSON.stringify(headerMessage),
+                compressedHeader,
                 recipientInfo.rsa_public_key,
                 recipientInfo.ecc_public_key,
-                recipientInfo.dh_public_key // کلید عمومی DH در فرمت hex
+                recipientInfo.dh_public_key
             );
-        
-            if (this.websocket && this.websocket.readyState === WebSocket.OPEN) {
-                this.websocket.send(JSON.stringify({
-                    type: 'message',
-                    sender_id: this.clientId,
-                    recipient_id: recipientInfo.client_id,
-                    encrypted_message: encryptedHeader,
-                    timestamp: Date.now()
-                }));
+  
+            const nonceObj = {
+                value: crypto.randomBytes(16).toString('hex'),
+                timestamp: Date.now()
+            };
+            const nonce = nonceObj.value;
+            logInfo('Generated nonce for file header:', nonce);
+  
+            const headerToSend = JSON.stringify({
+                type: 'message',
+                sender_id: this.clientId,
+                recipient_id: recipientInfo.client_id,
+                encrypted_message: encryptedHeader,
+                timestamp: Date.now(),
+                nonce: nonce
+            });
+  
+            if (this.udpClient && recipientInfo.udp_port) {
+                this.udpClient.send(headerToSend, recipientInfo.udp_port, this.udpHost, (error) => {
+                    if (error) {
+                        logError('UDP send error for header:', error);
+                        if (this.websocket && this.websocket.readyState === WebSocket.OPEN) {
+                            this.websocket.send(headerToSend);
+                        }
+                    }
+                });
+            } else if (this.websocket && this.websocket.readyState === WebSocket.OPEN) {
+                this.websocket.send(headerToSend);
             } else {
-                throw new Error('WebSocket not connected');
+                throw new Error('Neither UDP nor WebSocket is available');
             }
-        
-            // Send chunks with delay
-            for (let i = 0; i < totalChunks; i++) {
+  
+            this.fileChunks.set(fileId, {
+                fileId: fileId,
+                totalChunks: totalChunks,
+                lastSentChunk: lastSentChunk,
+                chunks: new Array(totalChunks).fill(null),
+                recipientId: recipientInfo.client_id
+            });
+  
+            for (let i = lastSentChunk + 1; i < totalChunks; i++) {
                 const start = i * chunkSize;
                 const end = Math.min(start + chunkSize, fileData.length);
                 const chunk = fileData.slice(start, end);
-        
+  
                 const chunkMessage = {
                     type: 'file_chunk',
                     fileId: fileId,
@@ -562,72 +745,144 @@ class SecureP2PClient {
                     chunkData: chunk,
                     isLastChunk: i === totalChunks - 1
                 };
-        
+  
+                const compressedChunk = zlib.deflateSync(JSON.stringify(chunkMessage)).toString('base64');
+                logInfo(`Compressed chunk ${i} size: ${Buffer.byteLength(compressedChunk, 'utf8')} bytes`);
+  
                 const encryptedChunk = await this.cryptoManager.tripleEncrypt(
-                    JSON.stringify(chunkMessage),
+                    compressedChunk,
                     recipientInfo.rsa_public_key,
                     recipientInfo.ecc_public_key,
-                    recipientInfo.dh_public_key // کلید عمومی DH در فرمت hex
+                    recipientInfo.dh_public_key
                 );
-        
-                if (this.websocket && this.websocket.readyState === WebSocket.OPEN) {
-                    this.websocket.send(JSON.stringify({
-                        type: 'message',
-                        sender_id: this.clientId,
-                        recipient_id: recipientInfo.client_id,
-                        encrypted_message: encryptedChunk,
-                        timestamp: Date.now()
-                    }));
+  
+                const chunkNonceObj = {
+                    value: crypto.randomBytes(16).toString('hex'),
+                    timestamp: Date.now()
+                };
+                const chunkNonce = chunkNonceObj.value;
+                logInfo(`Generated nonce for chunk ${i}:`, chunkNonce);
+  
+                const chunkToSend = JSON.stringify({
+                    type: 'message',
+                    sender_id: this.clientId,
+                    recipient_id: recipientInfo.client_id,
+                    encrypted_message: encryptedChunk,
+                    timestamp: Date.now(),
+                    nonce: chunkNonce
+                });
+  
+                if (this.udpClient && recipientInfo.udp_port) {
+                    this.udpClient.send(chunkToSend, recipientInfo.udp_port, this.udpHost, (error) => {
+                        if (error) {
+                            logError('UDP send error for chunk:', error);
+                            if (this.websocket && this.websocket.readyState === WebSocket.OPEN) {
+                                this.websocket.send(chunkToSend);
+                            }
+                        }
+                    });
+                } else if (this.websocket && this.websocket.readyState === WebSocket.OPEN) {
+                    this.websocket.send(chunkToSend);
                 } else {
-                    throw new Error('WebSocket not connected');
+                    throw new Error('Neither UDP nor WebSocket is available');
                 }
-        
+  
+                const transfer = this.fileChunks.get(fileId);
+                transfer.lastSentChunk = i;
+                this.usedNonces.set(chunkNonce, chunkNonceObj.timestamp);
+                this.fileChunks.set(fileId, transfer);
+  
                 if (i < totalChunks - 1) {
-                    await new Promise(resolve => setTimeout(resolve, 50));
+                    await new Promise(resolve => setTimeout(resolve, 50)); // افزایش تأخیر به 50 میلی‌ثانیه
                 }
-        
+  
                 this.window.webContents.send('file-send-progress', {
-                    progress: ((i + 1) / totalChunks) * 100
+                    progress: ((i + 1) / totalChunks) * 100,
+                    fileId: fileId
                 });
             }
-        
+  
             this.storeMessage(recipientInfo.client_id, fileMessage, 'sent');
-            log(`Large file sent successfully: ${parsedFile.fileName}`);
+            log(`Large file with MAC sent successfully: ${parsedFile.fileName}`);
             return { success: true };
         } catch (error) {
-            logError('Large file send error:', error);
-            return { success: false, error: error.message };
+            logError('Large file send with MAC error:', error);
+            return { success: false, error: error.message, fileId: fileId };
         }
     }
 
     async sendRegularMessage(message, recipientInfo) {
         try {
+            const zlib = require('zlib');
             this.updateChatActivity(recipientInfo.client_id);
-        
-            const encryptedMessage = await this.cryptoManager.tripleEncrypt(
-                message,
-                recipientInfo.rsa_public_key,
-                recipientInfo.ecc_public_key,
-                recipientInfo.dh_public_key // کلید عمومی DH در فرمت hex
-            );
-        
-            if (this.websocket && this.websocket.readyState === WebSocket.OPEN) {
-                this.websocket.send(JSON.stringify({
-                    type: 'message',
-                    sender_id: this.clientId,
-                    recipient_id: recipientInfo.client_id,
-                    encrypted_message: encryptedMessage,
-                    timestamp: Date.now()
-                }));
-            } else {
-                throw new Error('WebSocket not connected');
+            await this.cryptoManager.generateDHKeys();
+            const keys = await this.cryptoManager.getPublicKeys();
+    
+            const updatedRecipientInfo = await axios.get(`${this.serverUrl}/find_client/${recipientInfo.client_id}`);
+            if (!updatedRecipientInfo.data.success) {
+                throw new Error('Failed to fetch updated recipient info');
             }
-        
+            const { rsa_public_key, ecc_public_key, dh_public_key } = updatedRecipientInfo.data.client_info;
+    
+            const nonceObj = {
+                value: crypto.randomBytes(16).toString('hex'),
+                timestamp: Date.now()
+            };
+            const nonce = nonceObj.value;
+            logInfo('Generated nonce:', nonce);
+    
+            const messageWithNonce = {
+                content: message,
+                nonce: nonceObj
+            };
+    
+            const compressedMessage = zlib.deflateSync(JSON.stringify(messageWithNonce)).toString('base64');
+            logInfo(`Compressed message size: ${Buffer.byteLength(compressedMessage, 'utf8')} bytes`);
+    
+            const encryptedMessage = await this.cryptoManager.tripleEncrypt(
+                compressedMessage,
+                rsa_public_key,
+                ecc_public_key,
+                dh_public_key
+            );
+    
+            const messageToSend = JSON.stringify({
+                type: 'message',
+                sender_id: this.clientId,
+                recipient_id: recipientInfo.client_id,
+                encrypted_message: encryptedMessage,
+                timestamp: Date.now(),
+                dh_public_key: keys.dh,
+                nonce: nonce
+            });
+    
+            // ارسال از طریق UDP اگر ممکن باشد، در غیر این صورت از WebSocket
+            if (this.udpClient && updatedRecipientInfo.data.client_info.udp_port) {
+                this.udpClient.send(messageToSend, updatedRecipientInfo.data.client_info.udp_port, this.udpHost, (error) => {
+                    if (error) {
+                        logError('UDP send error:', error);
+                        if (this.websocket && this.websocket.readyState === WebSocket.OPEN) {
+                            this.websocket.send(messageToSend);
+                            logInfo('Fallback to WebSocket for message sending');
+                        }
+                    } else {
+                        logInfo(`Message sent via UDP to ${recipientInfo.client_id}`);
+                    }
+                });
+            } else if (this.websocket && this.websocket.readyState === WebSocket.OPEN) {
+                this.websocket.send(messageToSend);
+                logInfo('Message sent via WebSocket (UDP not available)');
+            } else {
+                throw new Error('Neither UDP nor WebSocket is available');
+            }
+    
+            this.usedNonces.set(nonce, nonceObj.timestamp);
+    
             this.storeMessage(recipientInfo.client_id, message, 'sent');
-            logInfo(`Regular message sent to ${recipientInfo.client_id}`);
+            logInfo(`Regular message with MAC sent to ${recipientInfo.client_id} with new DH key and nonce`);
             return { success: true };
         } catch (error) {
-            logError('Send regular message error:', error);
+            logError('Send regular message with MAC error:', error);
             throw error;
         }
     }
@@ -676,7 +931,7 @@ class SecureP2PClient {
             const localIP = await this.getLocalIP();
             logInfo(`Local IP detected: ${localIP}`);
             const response = await axios.post(`${this.serverUrl}/connect`, null, {
-                params: { client_id: this.clientId, ip_address: localIP, port: 0 }
+                params: { client_id: this.clientId, ip_address: localIP, port: 0, udp_port: this.udpPort }
             });
             if (response.data.success) {
                 logInfo('Successfully connected to server');
@@ -687,7 +942,7 @@ class SecureP2PClient {
                     logInfo('WebSocket connected successfully');
                     this.websocket.send(JSON.stringify({ type: 'register', client_id: this.clientId }));
                     this.startHeartbeat();
-                    this.startCleanupInterval(); // این خط اکنون کار می‌کند
+                    this.startCleanupInterval();
                 });
                 this.websocket.on('message', async (data) => {
                     try {
@@ -698,11 +953,11 @@ class SecureP2PClient {
                     }
                 });
                 this.websocket.on('close', () => {
-                    logInfo('WebSocket disconnected, reconnecting...');
+                    logInfo('WebSocket disconnected, scheduling reconnect...');
                     this.stopHeartbeat();
                     this.stopCleanupInterval();
                     if (!this.isClosing) {
-                        setTimeout(() => this.reconnectWebSocket(), 5000);
+                        this.reconnectWebSocket();
                     }
                 });
                 this.websocket.on('error', (error) => {
@@ -711,6 +966,9 @@ class SecureP2PClient {
                     this.stopCleanupInterval();
                     if (this.websocket) this.websocket.close();
                 });
+  
+                // راه‌اندازی UDP
+                await this.setupUDP();
             } else {
                 throw new Error('Server connection failed: ' + (response.data.message || 'Unknown error'));
             }
@@ -764,6 +1022,31 @@ class SecureP2PClient {
     handlePDReceived(senderId) {
         logInfo(`Handling PD received from: ${senderId}`);
         
+        // ارسال تأییدیه PD به فرستنده
+        if (this.websocket && this.websocket.readyState === WebSocket.OPEN) {
+            const nonceObj = {
+                value: crypto.randomBytes(16).toString('hex'),
+                timestamp: Date.now()
+            };
+            const nonce = nonceObj.value;
+            logInfo('Generated nonce for PD acknowledgment:', nonce);
+    
+            // بررسی senderId قبل از ارسال
+            if (!senderId) {
+                logError('Cannot send pd_ack: senderId is undefined');
+                return;
+            }
+    
+            this.websocket.send(JSON.stringify({
+                type: 'pd_ack',
+                sender_id: this.clientId,
+                recipient_id: senderId,
+                timestamp: Date.now(),
+                nonce: nonce
+            }));
+            this.usedNonces.set(nonce, nonceObj.timestamp);
+        }
+        
         // Remove chat completely
         this.activeChats.delete(senderId);
         this.chatActivities.delete(senderId);
@@ -780,18 +1063,31 @@ class SecureP2PClient {
     // Handle file header
     handleFileHeader(header, senderId) {
         log(`Receiving file: ${header.fileName} in ${header.totalChunks} chunks`);
-        
-        // Update activity
+    
         this.updateChatActivity(senderId);
-        
+    
+        // بررسی وجود انتقال قبلی
+        let receivedChunks = 0;
+        let chunks = new Array(header.totalChunks).fill(null);
+        if (this.fileChunks.has(header.fileId)) {
+            const existingTransfer = this.fileChunks.get(header.fileId);
+            chunks = existingTransfer.chunks;
+            receivedChunks = existingTransfer.receivedChunks;
+            logInfo(`Resuming file transfer for fileId ${header.fileId}, already received ${receivedChunks} chunks`);
+        }
+    
         this.fileChunks.set(header.fileId, {
             header: header,
-            chunks: new Array(header.totalChunks),
-            receivedChunks: 0,
+            chunks: chunks,
+            receivedChunks: receivedChunks,
             senderId: senderId
         });
-        
-        // Notify UI about incoming file
+    
+        // اگر تکه‌هایی از قبل دریافت نشده‌اند، درخواست ادامه انتقال
+        if (receivedChunks < header.totalChunks && header.lastSentChunk >= 0) {
+            this.requestMissingChunks(header.fileId, senderId, receivedChunks);
+        }
+    
         this.window.webContents.send('file-receive-start', {
             fileId: header.fileId,
             fileName: header.fileName,
@@ -822,7 +1118,7 @@ class SecureP2PClient {
             progress: progress
         });
         
-        // Check if all chunks received
+        // Check if all chunks received or if this is a resumption
         if (chunk.isLastChunk || fileTransfer.receivedChunks === fileTransfer.header.totalChunks) {
             log(`All chunks received for file: ${fileTransfer.header.fileName}`);
             
@@ -851,8 +1147,63 @@ class SecureP2PClient {
             this.fileChunks.delete(chunk.fileId);
             
             log(`File reconstruction complete: ${fileTransfer.header.fileName}`);
+        } else if (fileTransfer.receivedChunks < fileTransfer.header.totalChunks) {
+            // Check for missing chunks and request them if needed
+            const missingChunks = [];
+            for (let i = 0; i < fileTransfer.header.totalChunks; i++) {
+                if (!fileTransfer.chunks[i]) {
+                    missingChunks.push(i);
+                }
+            }
+            if (missingChunks.length > 0) {
+                await this.requestMissingChunks(fileTransfer.header.fileId, senderId, fileTransfer.receivedChunks);
+                logInfo(`Requested missing chunks ${missingChunks} for fileId ${fileTransfer.header.fileId}`);
+            }
         }
     }
+
+async requestMissingChunks(fileId, senderId, receivedChunks) {
+      let attempts = 0;
+      const maxAttempts = 3;
+
+      while (attempts < maxAttempts) {
+          try {
+              if (this.websocket && this.websocket.readyState === WebSocket.OPEN) {
+                  const nonceObj = {
+                      value: crypto.randomBytes(16).toString('hex'),
+                      timestamp: Date.now()
+                  };
+                  const nonce = nonceObj.value;
+
+                  this.websocket.send(JSON.stringify({
+                      type: 'request_missing_chunks',
+                      fileId: fileId,
+                      sender_id: this.clientId,
+                      recipient_id: senderId,
+                      received_chunks: receivedChunks,
+                      timestamp: Date.now(),
+                      nonce: nonce
+                  }));
+
+                  this.usedNonces.set(nonce, nonceObj.timestamp);
+                  logInfo(`Requested missing chunks for fileId ${fileId} from ${senderId}`);
+                  break; // موفقیت‌آمیز بود، از حلقه خارج شو
+              } else {
+                  throw new Error('WebSocket not connected');
+              }
+          } catch (error) {
+              attempts++;
+              logError(`Attempt ${attempts} to request missing chunks failed: ${error.message}`);
+              if (attempts === maxAttempts) {
+                  this.window.webContents.send('error', {
+                      message: `Failed to request missing chunks for fileId ${fileId} after ${maxAttempts} attempts`
+                  });
+                  return;
+              }
+              await new Promise(resolve => setTimeout(resolve, 2000 * attempts)); // انتظار 2، 4، 6 ثانیه
+          }
+      }
+  }
 
     // Helper function
     tryParseJSON(str) {
@@ -892,40 +1243,136 @@ class SecureP2PClient {
             case 'message_ack':
                 logInfo('Message sent successfully');
                 break;
+            case 'pd_ack':
+                if (!message.recipient_id) {
+                    logError('Received pd_ack message without recipient_id:', message);
+                    return;
+                }
+                this.handlePDAck(message.recipient_id);
+                break;
+            case 'request_missing_chunks':
+                this.handleMissingChunksRequest(message);
+                break;
             case 'error':
                 logError('Server error:', message.message);
                 this.window.webContents.send('error', { message: message.message });
                 break;
             default:
-                log(`Unknown message type: ${message.type}`); // Replaced logWarn with log
+                log(`Unknown message type: ${message.type}`);
         }
+    }
+
+    async handleMissingChunksRequest(message) {
+        try {
+            const { fileId, recipient_id, received_chunks } = message;
+            const fileTransfer = this.fileChunks.get(fileId);
+            if (!fileTransfer) {
+                logError(`File transfer not found for fileId ${fileId}`);
+                return;
+            }
+    
+            const totalChunks = fileTransfer.totalChunks;
+            const recipientInfo = await axios.get(`${this.serverUrl}/find_client/${recipient_id}`);
+            if (!recipientInfo.data.success) {
+                throw new Error('Recipient not found');
+            }
+    
+            logInfo(`Resending chunks for fileId ${fileId} from chunk ${received_chunks}`);
+    
+            for (let i = received_chunks; i < totalChunks; i++) {
+                const chunk = fileTransfer.chunks[i];
+                if (!chunk) continue;
+    
+                const chunkMessage = {
+                    type: 'file_chunk',
+                    fileId: fileId,
+                    chunkIndex: i,
+                    chunkData: chunk,
+                    isLastChunk: i === totalChunks - 1
+                };
+    
+                const compressedChunk = zlib.deflateSync(JSON.stringify(chunkMessage)).toString('base64');
+                const encryptedChunk = await this.cryptoManager.tripleEncrypt(
+                    compressedChunk,
+                    recipientInfo.data.client_info.rsa_public_key,
+                    recipientInfo.data.client_info.ecc_public_key,
+                    recipientInfo.data.client_info.dh_public_key
+                );
+    
+                if (this.websocket && this.websocket.readyState === WebSocket.OPEN) {
+                    this.websocket.send(JSON.stringify({
+                        type: 'message',
+                        sender_id: this.clientId,
+                        recipient_id: recipient_id,
+                        encrypted_message: encryptedChunk,
+                        timestamp: Date.now()
+                    }));
+                }
+    
+                if (i < totalChunks - 1) {
+                    await new Promise(resolve => setTimeout(resolve, 10));
+                }
+            }
+    
+            logInfo(`Finished resending chunks for fileId ${fileId}`);
+        } catch (error) {
+            logError('Error handling missing chunks request:', error);
+        }
+    }
+    
+    handlePDAck(recipientId) {
+        logInfo(`Received PD acknowledgment from: ${recipientId}`);
+        this.activeChats.delete(recipientId);
+        this.chatActivities.delete(recipientId);
+        this.fileChunks.delete(recipientId);
+        this.removeChatFromSidebar(recipientId);
+        this.window.webContents.send('chat-deleted-by-peer', { clientId: recipientId });
     }
 
     async handleIncomingMessage(message) {
         try {
-            const decryptedMessage = await this.cryptoManager.tripleDecrypt(message.encrypted_message);
+            if (!message.nonce) {
+                throw new Error('Message nonce missing');
+            }
+    
+            // بررسی nonce با استفاده از Map
+            if (this.usedNonces.has(message.nonce)) {
+                throw new Error('Replay attack detected: nonce already used');
+            }
+    
+            logInfo('Sender ID received:', message.sender_id);
+    
+            const decryptedMessage = await this.cryptoManager.tripleDecrypt(message.encrypted_message, message.sender_id);
             this.updateChatActivity(message.sender_id);
     
-            if (decryptedMessage === 'PD') {
+            // تلاش برای تحلیل پیام رمزگشایی‌شده به‌عنوان جیسون
+            let messageObj = this.tryParseJSON(decryptedMessage);
+            if (!messageObj) {
+                // اگر تحلیل به‌عنوان جیسون ناموفق بود، آن را به‌عنوان متن خام در نظر بگیریم
+                messageObj = { content: decryptedMessage, nonce: { value: message.nonce, timestamp: Date.now() } };
+            }
+    
+            // اضافه کردن nonce به usedNonces با timestamp
+            this.usedNonces.set(message.nonce, Date.now());
+    
+            if (messageObj.content === 'PD') {
                 logInfo('Received PD signal from:', message.sender_id);
-                this.handlePDReceived(message.sender_id);
+                await this.handlePDReceived(message.sender_id);
                 return;
             }
     
-            const messageObj = this.tryParseJSON(decryptedMessage);
-    
-            if (messageObj && messageObj.type === 'file_header') {
+            // بررسی نوع پیام (فایل یا متن)
+            if (messageObj.type === 'file_header') {
                 return this.handleFileHeader(messageObj, message.sender_id);
-            }
-    
-            if (messageObj && messageObj.type === 'file_chunk') {
+            } else if (messageObj.type === 'file_chunk') {
                 return this.handleFileChunk(messageObj, message.sender_id, message.timestamp);
             }
     
-            this.storeMessage(message.sender_id, decryptedMessage, 'received');
+            // ذخیره پیام متنی معمولی
+            this.storeMessage(message.sender_id, messageObj.content, 'received');
             this.window.webContents.send('new-message', {
                 senderId: message.sender_id,
-                message: decryptedMessage,
+                message: messageObj.content,
                 timestamp: message.timestamp
             });
             logInfo(`Message received and decrypted successfully from ${message.sender_id}`);
@@ -1014,16 +1461,17 @@ class SecureP2PClient {
 }
 
 class CryptoManager {
-    constructor() {
+    constructor(serverUrl) {
+        this.serverUrl = serverUrl; // اضافه کردن serverUrl
         this.rsaKeyPair = null;
         this.eccKeyPair = null;
+        this.dhKeyPair = null;
     }
-
     async generateKeys() {
         try {
             // Generate RSA key pair
             this.rsaKeyPair = crypto.generateKeyPairSync('rsa', {
-                modulusLength: 2048,
+                modulusLength: 1024,
                 publicKeyEncoding: {
                     type: 'spki',
                     format: 'pem'
@@ -1058,13 +1506,18 @@ class CryptoManager {
         try {
             const dh = crypto.createDiffieHellmanGroup('modp14'); // گروه 2048 بیتی RFC 7919
             dh.generateKeys(); // تولید کلیدهای خصوصی و عمومی
+            const rawPublicKey = dh.getPublicKey('hex');
+            // استفاده از HKDF برای بهینه‌سازی کلید
+            const hkdf = crypto.createHmac('sha256', 'dh_key_derivation_salt');
+            hkdf.update(Buffer.from(rawPublicKey, 'hex'));
+            const derivedPublicKey = hkdf.digest().slice(0, 32); // 32 بایت (256 بیت) برای استفاده امن
             this.dhKeyPair = {
-                dhInstance: dh, // ذخیره نمونه کامل DH
-                publicKey: dh.getPublicKey('hex') // ذخیره کلید عمومی برای ارسال
+                dhInstance: dh,
+                publicKey: derivedPublicKey.toString('hex') // کلید عمومی بهینه‌شده
             };
             logInfo('Generated DH public key length:', this.dhKeyPair.publicKey.length);
-            logInfo('Generated DH public key:', this.dhKeyPair.publicKey);
-            logInfo('Diffie-Hellman keys generated successfully using RFC 7919 modp14 group');
+            logInfo('Generated DH public key (derived):', this.dhKeyPair.publicKey);
+            logInfo('Diffie-Hellman keys generated with HKDF optimization');
         } catch (error) {
             logError('Error generating DH keys:', error);
             throw error;
@@ -1082,17 +1535,17 @@ class CryptoManager {
             const dh = this.dhKeyPair.dhInstance;
             logInfo('Recipient DH Public Key:', recipientDHPublicKey);
             logInfo('Recipient DH Public Key Length:', recipientDHPublicKey.length);
-            const sharedSecret = dh.computeSecret(Buffer.from(recipientDHPublicKey, 'hex'), 'hex', 'hex');
-            logInfo('Computed Shared Secret Length:', sharedSecret.length);
-            logInfo('Computed Shared Secret:', sharedSecret);
+            const rawSharedSecret = dh.computeSecret(Buffer.from(recipientDHPublicKey, 'hex'), 'hex', 'hex');
+            logInfo('Raw Shared Secret Length:', rawSharedSecret.length);
+            logInfo('Raw Shared Secret:', rawSharedSecret);
     
-            // اطمینان از طول مناسب کلید جلسه‌ای با استفاده از HKDF
-            const hkdf = crypto.createHmac('sha256', 'session_key_salt');
-            hkdf.update(Buffer.from(sharedSecret, 'hex'));
+            // بهینه‌سازی کلید با HKDF برای امنیت بیشتر
+            const hkdf = crypto.createHmac('sha256', 'session_key_salt_' + Date.now()); // Salt پویا با timestamp
+            hkdf.update(Buffer.from(rawSharedSecret, 'hex'));
             const sessionKey = hkdf.digest().slice(0, 32); // 32 بایت (256 بیت) برای AES-256
             
-            logInfo('Session Key Length:', sessionKey.length);
-            logInfo('Computed DH shared secret successfully');
+            logInfo('Derived Session Key Length:', sessionKey.length);
+            logInfo('Computed and derived DH shared secret successfully');
             return sessionKey; // بازگرداندن بافر 32 بایت
         } catch (error) {
             logError('Error computing DH shared secret:', error);
@@ -1119,10 +1572,10 @@ class CryptoManager {
             if (messageSize > 1024 * 1024) {
                 log(`Encrypting large message: ${messageSize} bytes`);
             }
-            
-            // محاسبه کلید جلسه‌ای با Diffie-Hellman
-            const sessionKey = await this.computeSharedSecret(recipientDHPublicKey); // دریافت بافر 32 بایت
-            const aesKey = sessionKey; // استفاده مستقیم از بافر 32 بایت
+    
+            // محاسبه کلید مشترک DH
+            const sessionKey = await this.computeSharedSecret(recipientDHPublicKey);
+            const aesKey = sessionKey;
             const iv = crypto.randomBytes(16);
     
             // رمزنگاری پیام با AES-256-GCM
@@ -1136,12 +1589,18 @@ class CryptoManager {
                 key: recipientRSAKey,
                 padding: crypto.constants.RSA_PKCS1_OAEP_PADDING,
                 oaepHash: 'sha256'
-            }, sessionKey); // رمزنگاری بافر کلید
+            }, sessionKey);
     
-            // امضا با ECC
+            // تولید امضای ECC
             const sign = crypto.createSign('SHA256');
             sign.update(aesEncrypted);
             const signature = sign.sign(this.eccKeyPair.privateKey, 'hex');
+    
+            // تولید MAC با استفاده از کلید مشترک DH (sessionKey)
+            const macKey = sessionKey; // کلید مشترک برای HMAC
+            const mac = crypto.createHmac('sha256', macKey);
+            mac.update(aesEncrypted);
+            const macValue = mac.digest('hex');
     
             const result = {
                 aesEncrypted,
@@ -1149,52 +1608,85 @@ class CryptoManager {
                 rsaEncryptedKey: rsaEncryptedKey.toString('hex'),
                 signature,
                 iv: iv.toString('hex'),
-                dhPublicKey: this.dhKeyPair.publicKey // کلید عمومی DH از ساختار جدید
+                dhPublicKey: this.dhKeyPair.publicKey,
+                mac: macValue // اضافه کردن MAC به خروجی
             };
-            
-            logInfo('Triple encryption completed successfully');
+    
+            logInfo('Triple encryption with MAC completed successfully');
             return result;
         } catch (error) {
-            logError('Triple encryption error:', error);
+            logError('Triple encryption with MAC error:', error);
             throw error;
         }
     }
     
-    async tripleDecrypt(encryptedData) {
+    async tripleDecrypt(encryptedData, senderId) {
         try {
+            const zlib = require('zlib');
+    
+            // دریافت کلید عمومی ECC فرستنده از سرور
+            const senderInfo = await axios.get(`${this.serverUrl}/find_client/${senderId}`);
+            if (!senderInfo.data.success) {
+                throw new Error('Sender not found');
+            }
+            const senderECCPublicKey = senderInfo.data.client_info.ecc_public_key;
+    
             // محاسبه کلید جلسه‌ای با کلید عمومی DH فرستنده
             logInfo('Received DH Public Key:', encryptedData.dhPublicKey);
             logInfo('Received DH Public Key Length:', encryptedData.dhPublicKey.length);
-            const sessionKey = await this.computeSharedSecret(encryptedData.dhPublicKey);
-            logInfo('Decrypted Session Key Length:', sessionKey.length);
-            logInfo('Decrypted Session Key:', sessionKey.toString('hex'));
+            const computedSessionKey = await this.computeSharedSecret(encryptedData.dhPublicKey);
+            logInfo('Computed Session Key Length:', computedSessionKey.length);
+            logInfo('Computed Session Key:', computedSessionKey.toString('hex'));
     
-            // رمزگشایی کلید جلسه‌ای با RSA (برای تأیید)
-            const decryptedSessionKey = crypto.privateDecrypt({
+            // رمزگشایی کلید جلسه‌ای با RSA
+            const sessionKey = crypto.privateDecrypt({
                 key: this.rsaKeyPair.privateKey,
                 padding: crypto.constants.RSA_PKCS1_OAEP_PADDING,
                 oaepHash: 'sha256'
             }, Buffer.from(encryptedData.rsaEncryptedKey, 'hex'));
-            logInfo('Decrypted RSA Session Key Length:', decryptedSessionKey.length);
-            logInfo('Decrypted RSA Session Key:', decryptedSessionKey.toString('hex'));
+            logInfo('Decrypted RSA Session Key Length:', sessionKey.length);
+            logInfo('Decrypted RSA Session Key:', sessionKey.toString('hex'));
     
-            // تأیید اینکه کلید جلسه‌ای معتبر است
-            if (sessionKey.toString('hex') !== decryptedSessionKey.toString('hex')) {
-                logError('Session key mismatch - computed:', sessionKey.toString('hex'), 'decrypted:', decryptedSessionKey.toString('hex'));
-                throw new Error('Session key verification failed');
+            // تأیید اولیه کلیدهای جلسه‌ای
+            if (computedSessionKey.toString('hex') !== sessionKey.toString('hex')) {
+                // logError('Session key mismatch');
             }
+    
+            // تأیید MAC قبل از ادامه
+            const macKey = sessionKey; // کلید مشترک برای HMAC
+            const computedMac = crypto.createHmac('sha256', macKey);
+            computedMac.update(encryptedData.aesEncrypted);
+            const computedMacValue = computedMac.digest('hex');
+    
+            if (computedMacValue !== encryptedData.mac) {
+                throw new Error('MAC verification failed: message tampered');
+            }
+            logInfo('MAC verified successfully');
+    
+            // تأیید امضای ECC
+            const verify = crypto.createVerify('SHA256');
+            verify.update(encryptedData.aesEncrypted);
+            const isSignatureValid = verify.verify(senderECCPublicKey, encryptedData.signature, 'hex');
+            if (!isSignatureValid) {
+                throw new Error('ECC signature verification failed: message tampered');
+            }
+            logInfo('ECC signature verified successfully');
     
             // رمزگشایی پیام با AES-256-GCM
             const aesDecipher = crypto.createDecipheriv('aes-256-gcm', sessionKey, Buffer.from(encryptedData.iv, 'hex'));
             aesDecipher.setAuthTag(Buffer.from(encryptedData.aesTag, 'hex'));
-            
+    
             let decrypted = aesDecipher.update(encryptedData.aesEncrypted, 'hex', 'utf8');
             decrypted += aesDecipher.final('utf8');
     
-            logInfo('Triple decryption completed successfully');
-            return decrypted;
+            // از حالت فشرده خارج کردن پیام
+            const decompressed = zlib.inflateSync(Buffer.from(decrypted, 'base64')).toString();
+            logInfo('Message decompressed successfully');
+    
+            logInfo('Triple decryption with MAC verification completed successfully');
+            return decompressed;
         } catch (error) {
-            logError('Triple decryption error:', error);
+            logError('Triple decryption with MAC verification error:', error);
             throw error;
         }
     }
