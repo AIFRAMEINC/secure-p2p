@@ -643,6 +643,86 @@
             height: 20px;
         }
 
+        /* Emoji Picker */
+        .emoji-btn {
+            width: 32px;
+            height: 32px;
+            border: none;
+            border-radius: 50%;
+            background: rgba(255, 255, 255, 0.1);
+            color: var(--text-secondary);
+            cursor: pointer;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 18px;
+            transition: all 0.2s ease;
+            margin-right: 8px;
+            flex-shrink: 0;
+        }
+
+        .emoji-btn:hover {
+            background: rgba(255, 255, 255, 0.2);
+            color: var(--text-primary);
+            transform: scale(1.1);
+        }
+
+        .emoji-picker {
+            position: absolute;
+            bottom: 100%;
+            left: 50px;
+            background: rgba(26, 26, 46, 0.95);
+            backdrop-filter: blur(15px);
+            border-radius: 12px;
+            border: 1px solid rgba(255, 255, 255, 0.1);
+            box-shadow: 0 8px 32px rgba(0, 0, 0, 0.4);
+            z-index: 1000;
+            min-width: 280px;
+            max-height: 250px;
+            overflow-y: auto;
+            padding: 12px;
+            display: none;
+            animation: emojiSlideIn 0.2s ease;
+        }
+
+        .emoji-grid {
+            display: grid;
+            grid-template-columns: repeat(8, 1fr);
+            gap: 8px;
+            direction: ltr;
+        }
+
+        .emoji-item {
+            width: 28px;
+            height: 28px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 18px;
+            cursor: pointer;
+            border-radius: 6px;
+            transition: all 0.2s ease;
+            background: transparent;
+            border: none;
+            padding: 0;
+        }
+
+        .emoji-item:hover {
+            background: rgba(255, 255, 255, 0.1);
+            transform: scale(1.2);
+        }
+
+        @keyframes emojiSlideIn {
+            from {
+                opacity: 0;
+                transform: translateY(10px) scale(0.95);
+            }
+            to {
+                opacity: 1;
+                transform: translateY(0) scale(1);
+            }
+        }
+
         /* File Upload Progress */
         .file-upload-progress {
             background: rgba(26, 26, 46, 0.95);
@@ -1201,6 +1281,9 @@
                             <button type="button" class="attach-btn" onclick="selectFile()" title="پیوست فایل">
                                 📎
                             </button>
+                            <button type="button" class="emoji-btn" onclick="toggleEmojiPicker(event)" title="ایموجی">
+                                😀
+                            </button>
                             <input 
                                 type="text" 
                                 class="message-input" 
@@ -1215,6 +1298,13 @@
                                     <path d="M2.01 21L23 12 2.01 3 2 10l15 2-15 2z"/>
                                 </svg>
                             </button>
+                            
+                            <!-- Emoji Picker -->
+                            <div id="emojiPicker" class="emoji-picker">
+                                <div class="emoji-grid" id="emojiGrid">
+                                    <!-- Emojis will be loaded here -->
+                                </div>
+                            </div>
                         </div>
                     </form>
                     <!-- Hidden file input -->
@@ -2731,6 +2821,103 @@
                         form.dispatchEvent(new Event('submit', { cancelable: true }));
                     }
                 }
+            }
+        }
+
+        // Emoji Picker Functions
+        const commonEmojis = [
+            '😀', '😃', '😄', '😁', '😆', '😅', '🤣', '😂',
+            '🙂', '🙃', '😉', '😊', '😇', '🥰', '😍', '🤩',
+            '😘', '😗', '😚', '😙', '😋', '😛', '😜', '🤪',
+            '😝', '🤑', '🤗', '🤭', '🤫', '🤔', '🤐', '🤨',
+            '😐', '😑', '😶', '😏', '😒', '🙄', '😬', '🤥',
+            '😔', '😕', '🙁', '😖', '😣', '😟', '😞', '😢',
+            '😭', '😤', '😠', '😡', '🤬', '🤯', '😳', '🥵',
+            '🥶', '😱', '😨', '😰', '😥', '😓', '🤗', '🤔',
+            '👍', '👎', '👌', '🤝', '👏', '🙌', '👐', '🤲',
+            '🙏', '✍️', '👋', '🤚', '🖐', '✋', '🖖', '👌',
+            '🤏', '✌️', '🤞', '🤟', '🤘', '🤙', '👈', '👉',
+            '👆', '🖕', '👇', '☝️', '👍', '👎', '👊', '✊',
+            '🤛', '🤜', '👏', '🙌', '👐', '🤲', '🤝', '🙏',
+            '❤️', '🧡', '💛', '💚', '💙', '💜', '🖤', '🤍',
+            '🤎', '💔', '❣️', '💕', '💞', '💓', '💗', '💖',
+            '💘', '💝', '💟', '☮️', '✝️', '☪️', '🕉', '☸️',
+            '✡️', '🔯', '🕎', '☯️', '☦️', '🛐', '⛎', '♈',
+            '🔥', '⭐', '🌟', '✨', '💫', '☄️', '💥', '💢',
+            '💯', '💨', '💦', '💤', '🎉', '🎊', '🎈', '🎁'
+        ];
+
+        function loadEmojis() {
+            const emojiGrid = document.getElementById('emojiGrid');
+            if (emojiGrid && emojiGrid.children.length === 0) {
+                commonEmojis.forEach(emoji => {
+                    const button = document.createElement('button');
+                    button.type = 'button'; // مهم: تا submit نشه
+                    button.className = 'emoji-item';
+                    button.textContent = emoji;
+                    button.addEventListener('click', function(event) {
+                        event.preventDefault();
+                        event.stopPropagation();
+                        insertEmoji(emoji);
+                    });
+                    emojiGrid.appendChild(button);
+                });
+            }
+        }
+
+        function toggleEmojiPicker(event) {
+            if (event) {
+                event.preventDefault();
+                event.stopPropagation();
+            }
+            
+            const picker = document.getElementById('emojiPicker');
+            if (picker) {
+                const isVisible = picker.style.display === 'block';
+                
+                if (isVisible) {
+                    picker.style.display = 'none';
+                    document.removeEventListener('click', closeEmojiPickerOutside);
+                } else {
+                    loadEmojis();
+                    picker.style.display = 'block';
+                    setTimeout(() => {
+                        document.addEventListener('click', closeEmojiPickerOutside);
+                    }, 100);
+                }
+            }
+        }
+
+        function closeEmojiPickerOutside(event) {
+            const picker = document.getElementById('emojiPicker');
+            const emojiBtn = document.querySelector('.emoji-btn');
+            
+            if (picker && emojiBtn && 
+                !picker.contains(event.target) && 
+                !emojiBtn.contains(event.target)) {
+                picker.style.display = 'none';
+                document.removeEventListener('click', closeEmojiPickerOutside);
+            }
+        }
+
+        function insertEmoji(emoji) {
+            const messageInput = document.getElementById('messageInput');
+            if (messageInput) {
+                const cursorPos = messageInput.selectionStart || 0;
+                const textBefore = messageInput.value.substring(0, cursorPos);
+                const textAfter = messageInput.value.substring(messageInput.selectionEnd || cursorPos);
+                
+                messageInput.value = textBefore + emoji + textAfter;
+                
+                // فوکوس و cursor position
+                messageInput.focus();
+                const newCursorPos = cursorPos + emoji.length;
+                setTimeout(() => {
+                    messageInput.setSelectionRange(newCursorPos, newCursorPos);
+                }, 0);
+                
+                // فعال کردن دکمه Send
+                toggleSendButton();
             }
         }
     
