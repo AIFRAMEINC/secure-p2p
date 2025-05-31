@@ -495,15 +495,15 @@
         }
 
         .message.sent .message-bubble {
-            background: var(--text-accent);
+            background: #2b5278;
             color: white;
             border-bottom-right-radius: 4px;
             margin-left: 50px;
         }
 
         .message.received .message-bubble {
-            background: rgba(255, 255, 255, 0.1);
-            color: var(--text-primary);
+            background: #5e498a;
+            color: white;
             border-bottom-left-radius: 4px;
             margin-right: 50px;
             border: 1px solid rgba(255, 255, 255, 0.1);
@@ -515,6 +515,158 @@
             margin-top: 4px;
             text-align: right;
             direction: ltr;
+        }
+
+        /* Markdown Styles */
+        .message-bubble code {
+            background: rgba(255, 255, 255, 0.15);
+            padding: 2px 6px;
+            border-radius: 4px;
+            font-family: 'Consolas', 'Monaco', monospace;
+            font-size: 13px;
+            color: #e0e0e0;
+        }
+
+        .message.sent .message-bubble code {
+            background: rgba(255, 255, 255, 0.2);
+            color: white;
+        }
+
+        .message.received .message-bubble pre {
+            background: rgba(0, 0, 0, 0.3);
+        }
+
+        .message-bubble pre {
+            background: rgba(0, 0, 0, 0.3);
+            padding: 12px;
+            border-radius: 8px;
+            margin: 8px 0;
+            overflow-x: auto;
+            font-family: 'Consolas', 'Monaco', monospace;
+            font-size: 13px;
+            line-height: 1.4;
+            white-space: pre-wrap;
+            word-wrap: break-word;
+            color: #f0f0f0;
+        }
+
+        .message.sent .message-bubble pre {
+            background: rgba(0, 0, 0, 0.25);
+        }
+
+        .message-bubble pre code {
+            background: transparent;
+            padding: 0;
+            color: inherit;
+        }
+
+        .message-bubble strong {
+            font-weight: 700;
+            color: var(--text-primary);
+        }
+
+        .message-bubble em {
+            font-style: italic;
+        }
+
+        .message-bubble del {
+            text-decoration: line-through;
+            opacity: 0.7;
+        }
+
+        .message-bubble u {
+            text-decoration: underline;
+        }
+
+        .message-bubble a {
+            color: var(--text-accent);
+            text-decoration: none;
+            border-bottom: 1px solid transparent;
+            transition: border-color 0.2s ease;
+        }
+
+        .message-bubble a:hover {
+            border-bottom-color: var(--text-accent);
+        }
+
+        .message.sent .message-bubble a {
+            color: white;
+            text-decoration: underline;
+        }
+
+        .message-bubble .spoiler {
+            background: var(--text-secondary);
+            color: var(--text-secondary);
+            padding: 2px 4px;
+            border-radius: 4px;
+            cursor: pointer;
+            transition: all 0.2s ease;
+            user-select: none;
+        }
+
+        .message-bubble .spoiler.revealed {
+            background: rgba(255, 255, 255, 0.1);
+            color: inherit;
+        }
+
+        .message.sent .message-bubble .spoiler {
+            background: rgba(0, 0, 0, 0.3);
+        }
+
+        .message.sent .message-bubble .spoiler.revealed {
+            background: rgba(0, 0, 0, 0.2);
+        }
+
+        /* Formatting toolbar */
+        .formatting-toolbar {
+            display: flex;
+            gap: 4px;
+            padding: 4px 8px;
+            background: rgba(255, 255, 255, 0.05);
+            border-radius: 8px;
+            margin-bottom: 8px;
+            align-items: center;
+            border: 1px solid rgba(255, 255, 255, 0.1);
+        }
+
+        .format-btn {
+            width: 28px;
+            height: 28px;
+            border: none;
+            border-radius: 6px;
+            background: transparent;
+            color: var(--text-secondary);
+            cursor: pointer;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 14px;
+            font-weight: bold;
+            transition: all 0.2s ease;
+        }
+
+        .format-btn:hover {
+            background: rgba(255, 255, 255, 0.1);
+            color: var(--text-primary);
+        }
+
+        .format-btn.active {
+            background: var(--text-accent);
+            color: white;
+        }
+
+        .format-separator {
+            width: 1px;
+            height: 20px;
+            background: rgba(255, 255, 255, 0.2);
+            margin: 0 4px;
+        }
+
+        .format-help {
+            margin-left: auto;
+            font-size: 12px;
+            color: var(--text-secondary);
+            cursor: help;
         }
 
         .message.received .message-time {
@@ -827,12 +979,22 @@
         }
 
         .message.sent .file-message {
-            background: rgba(0, 212, 255, 0.2);
-            border-color: rgba(0, 212, 255, 0.3);
+            background: rgba(255, 255, 255, 0.15);
+            border-color: rgba(255, 255, 255, 0.25);
         }
 
         .message.sent .file-message:hover {
             background: rgba(0, 212, 255, 0.3);
+        }
+
+        .message.received .message-bubble .spoiler {
+            background: rgba(255, 255, 255, 0.3);
+            color: rgba(255, 255, 255, 0.3);
+        }
+
+        .message.received .message-bubble .spoiler.revealed {
+            background: rgba(255, 255, 255, 0.15);
+            color: white;
         }
 
         .file-message-header {
@@ -1496,6 +1658,63 @@
                 window.secureAPI.onFileReceiveProgress((data) => {
                     this.handleFileReceiveProgress(data);
                 });
+                // Keyboard shortcuts for formatting
+                document.addEventListener('keydown', (e) => {
+                    const input = document.getElementById('messageInput');
+                    if (input && input === document.activeElement) {
+                        if (e.ctrlKey || e.metaKey) {
+                            switch(e.key.toLowerCase()) {
+                                case 'b':
+                                    e.preventDefault();
+                                    this.formatSelectedText('bold');
+                                    break;
+                                case 'i':
+                                    e.preventDefault();
+                                    this.formatSelectedText('italic');
+                                    break;
+                                case 'u':
+                                    e.preventDefault();
+                                    this.formatSelectedText('underline');
+                                    break;
+                                case 'k':
+                                    e.preventDefault();
+                                    // Show link dialog
+                                    const selectedText = input.value.substring(input.selectionStart, input.selectionEnd);
+                                    if (selectedText) {
+                                        const url = prompt('آدرس لینک را وارد کنید:');
+                                        if (url) {
+                                            const start = input.selectionStart;
+                                            const end = input.selectionEnd;
+                                            const text = input.value;
+                                            input.value = text.substring(0, start) + `[${selectedText}](${url})` + text.substring(end);
+                                            input.focus();
+                                            const newPos = start + selectedText.length + url.length + 4;
+                                            input.setSelectionRange(newPos, newPos);
+                                            toggleSendButton();
+                                        }
+                                    }
+                                    break;
+                            }
+                        }
+                    }
+                });
+
+                // Show/hide formatting toolbar on focus
+                const messageInput = document.getElementById('messageInput');
+                if (messageInput) {
+                    messageInput.addEventListener('focus', () => {
+                        document.getElementById('formattingToolbar').style.display = 'flex';
+                    });
+                    
+                    // Optional: Hide toolbar when no text is selected
+                    messageInput.addEventListener('blur', () => {
+                        setTimeout(() => {
+                            if (!messageInput.value.trim()) {
+                                document.getElementById('formattingToolbar').style.display = 'none';
+                            }
+                        }, 200);
+                    });
+                }
             }
     
             // NEW: Handle auto-cleanup of chats
@@ -2554,20 +2773,137 @@
                 
                 logInfo(`Total messages in chat ${clientId}: ${this.chats.get(clientId).messages.length}`);
             }
+
+            // Process markdown in messages
+            processMarkdown(text) {
+                // Escape HTML first
+                let processed = text
+                    .replace(/&/g, '&amp;')
+                    .replace(/</g, '&lt;')
+                    .replace(/>/g, '&gt;')
+                    .replace(/"/g, '&quot;')
+                    .replace(/'/g, '&#039;');
+                
+                // Code blocks (```code```)
+                processed = processed.replace(/```([\s\S]*?)```/g, '<pre><code>$1</code></pre>');
+                
+                // Inline code (`code`)
+                processed = processed.replace(/`([^`]+)`/g, '<code>$1</code>');
+                
+                // Bold (**text** or __text__)
+                processed = processed.replace(/\*\*([^\*]+)\*\*/g, '<strong>$1</strong>');
+                processed = processed.replace(/__([^_]+)__/g, '<strong>$1</strong>');
+                
+                // Italic (*text* or _text_)
+                processed = processed.replace(/\*([^\*]+)\*/g, '<em>$1</em>');
+                processed = processed.replace(/_([^_]+)_/g, '<em>$1</em>');
+                
+                // Strikethrough (~~text~~)
+                processed = processed.replace(/~~([^~]+)~~/g, '<del>$1</del>');
+                
+                // Underline (!!text!!)
+                processed = processed.replace(/!!([^!]+)!!/g, '<u>$1</u>');
+                
+                // Spoiler (||text||)
+                processed = processed.replace(/\|\|([^|]+)\|\|/g, '<span class="spoiler" onclick="this.classList.toggle(\'revealed\')">$1</span>');
+                
+                // Links ([text](url))
+                processed = processed.replace(/\[([^\]]+)\]\(([^)]+)\)/g, '<a href="$2" target="_blank" rel="noopener noreferrer">$1</a>');
+                
+                // Line breaks
+                processed = processed.replace(/\n/g, '<br>');
+                
+                return processed;
+            }
+
+            // Format selected text in input
+            formatSelectedText(format) {
+                const input = document.getElementById('messageInput');
+                if (!input) return;
+                
+                const start = input.selectionStart;
+                const end = input.selectionEnd;
+                const text = input.value;
+                const selectedText = text.substring(start, end);
+                
+                if (selectedText) {
+                    let formattedText = '';
+                    let cursorOffset = 0;
+                    
+                    switch(format) {
+                        case 'bold':
+                            formattedText = `**${selectedText}**`;
+                            cursorOffset = 2;
+                            break;
+                        case 'italic':
+                            formattedText = `*${selectedText}*`;
+                            cursorOffset = 1;
+                            break;
+                        case 'strike':
+                            formattedText = `~~${selectedText}~~`;
+                            cursorOffset = 2;
+                            break;
+                        case 'code':
+                            formattedText = `\`${selectedText}\``;
+                            cursorOffset = 1;
+                            break;
+                        case 'underline':
+                            formattedText = `!!${selectedText}!!`;
+                            cursorOffset = 2;
+                            break;
+                        case 'spoiler':
+                            formattedText = `||${selectedText}||`;
+                            cursorOffset = 2;
+                            break;
+                    }
+                    
+                    input.value = text.substring(0, start) + formattedText + text.substring(end);
+                    
+                    // Set cursor position
+                    input.focus();
+                    const newPos = start + selectedText.length + cursorOffset;
+                    input.setSelectionRange(newPos, newPos);
+                    
+                    // Update send button
+                    toggleSendButton();
+                }
+            }
+
+            // Show formatting help
+            showFormattingHelp() {
+                const helpText = `🎨 راهنمای Markdown:
+
+            **متن ضخیم**: **متن** یا __متن__
+            *متن کج*: *متن* یا _متن_
+            ~~متن خط خورده~~: ~~متن~~
+            \`کد\`: \`متن\`
+            !!زیرخط دار!!: !!متن!!
+            ||اسپویلر||: ||متن||
+            [لینک](آدرس): [متن](url)
+
+            بلوک کد:
+            \`\`\`
+            کد چند خطی
+            \`\`\``;
+
+                this.showNotification(helpText);
+            }
     
             displayMessage(message, type, timestamp) {
                 const messagesContainer = document.getElementById('messagesContainer');
                 const messageDiv = document.createElement('div');
                 messageDiv.className = `message ${type}`;
-    
+
                 const time = new Date(timestamp).toLocaleTimeString('fa-IR');
+                const processedMessage = this.processMarkdown(message);
+                
                 messageDiv.innerHTML = `
                     <div class="message-bubble">
-                        ${message}
+                        <div class="message-content">${processedMessage}</div>
                         <div class="message-time">${time}</div>
                     </div>
                 `;
-    
+
                 messagesContainer.appendChild(messageDiv);
                 messagesContainer.scrollTop = messagesContainer.scrollHeight;
             }
@@ -3040,6 +3376,18 @@
                 if (modal) {
                     modal.style.display = 'none';
                 }
+            }
+        }
+
+        function formatSelectedText(format) {
+            if (messenger) {
+                messenger.formatSelectedText(format);
+            }
+        }
+
+        function showFormattingHelp() {
+            if (messenger) {
+                messenger.showFormattingHelp();
             }
         }
     
